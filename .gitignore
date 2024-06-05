@@ -1,0 +1,19 @@
+## Build output
+zig-out/
+zig-cache/
+
+## Executables and Libraries
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+
+## Misc
+.DS_Store
+*.swp
+*~
+*.iml
+.idea/
+
