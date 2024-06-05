@@ -1,4 +1,5 @@
 const std = @import("std");
+const runner = @import("runner.zig");
 
 const Z80 = struct {
     // 8-bit registers
@@ -100,16 +101,23 @@ const Z80 = struct {
     }
 };
 
-pub fn main() void {
-    var z80 = Z80.init();
+pub fn main() !void {
+    // var z80 = Z80.init();
+    //
+    // // Load a program into memory (example: NOP, LD BC,0x1234)
+    // z80.memory[0x0000] = 0x00;
+    // z80.memory[0x0001] = 0x01;
+    // z80.memory[0x0002] = 0x34;
+    // z80.memory[0x0003] = 0x12;
+    // z80.memory[0x0004] = 0x76;
+    //
+    // // Execute the loaded program
+    // z80.run();
 
-    // Load a program into memory (example: NOP, LD BC,0x1234)
-    z80.memory[0x0000] = 0x00;
-    z80.memory[0x0001] = 0x01;
-    z80.memory[0x0002] = 0x34;
-    z80.memory[0x0003] = 0x12;
-    z80.memory[0x0004] = 0x76;
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    defer _ = gpa.deinit();
 
-    // Execute the loaded program
-    z80.run();
+    const alloc = gpa.allocator();
+
+    try runner.runTest(alloc, "SingleStepTests-z80/v1/0a.json");
 }
