@@ -144,9 +144,7 @@ pub const Z80 = struct {
     }
 
     pub fn load(self: *Z80, program: []const u8, start_address: u16) void {
-        for (program, 0..) |byte, i| {
-            self.memory[start_address + i] = byte;
-        }
+        @memcpy(self.memory[start_address .. start_address + program.len], program);
     }
 
     pub fn clearMemory(self: *Z80) void {
