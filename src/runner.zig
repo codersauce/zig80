@@ -2,6 +2,8 @@ const std = @import("std");
 const json = std.json;
 const Allocator = std.mem.Allocator;
 
+const Z80 = @import("cpu.zig").Z80;
+
 const RamEntry = struct {
     address: u16,
     value: u8,
@@ -44,6 +46,8 @@ const Cycle = struct {
 
 const Test = struct {
     name: []const u8,
+    initialValue: std.ArrayHashMap([]const u8, json.Value, std.array_hash_map.StringContext, true),
+    finalValue: std.ArrayHashMap([]const u8, json.Value, std.array_hash_map.StringContext, true),
     initial: State,
     final: State,
     cycles: []Cycle,
@@ -131,6 +135,8 @@ fn parseTest(alloc: Allocator, node: json.Value) !Test {
     const obj = node.object;
     return Test{
         .name = obj.get("name").?.string,
+        .initialValue = obj.get("initial").?.object,
+        .finalValue = obj.get("final").?.object,
         .initial = try parseState(alloc, obj.get("initial").?),
         .final = try parseState(alloc, obj.get("final").?),
         .cycles = try parseCycles(alloc, obj.get("cycles").?.array),
@@ -151,8 +157,47 @@ pub fn runTest(alloc: Allocator, path: []const u8) !void {
     const tests = parsed.value.array;
     std.debug.assert(tests.items.len == 1000);
 
-    for (tests.items) |item| {
+    var cpu = Z80.init();
+
+    for (tests.items, 0..) |item, i| {
+        if (i > 0) {
+            break;
+        }
         const t = try parseTest(alloc, item);
-        std.debug.print("Test: {any}\n\n", .{t});
+        std.debug.print("Test: {s}\n", .{t.name});
+
+        cpu.clearMemory();
+        assignState(Z80, &cpu, t.initialValue);
+
+        const regs = try cpu.dumpRegisters(alloc);
+        defer alloc.free(regs);
+        const memory = try cpu.dumpMemory(alloc);
+        std.debug.print("CPU before: {s}\n", .{regs});
+        std.debug.print("Memory before:\n{s}", .{memory});
+
+        std.debug.print("\n", .{});
+    }
+}
+
+fn assignState(comptime T: type, cpu: *T, values: std.ArrayHashMap([]const u8, json.Value, std.array_hash_map.StringContext, true)) void {
+    const info = @typeInfo(T);
+    inline for (info.Struct.fields) |field| {
+        const name = field.name;
+        const value = values.get(name);
+        switch (field.type) {
+            u8 => @field(cpu, name) = @as(u8, @intCast(value.?.integer)),
+            u16 => @field(cpu, name) = @as(u16, @intCast(value.?.integer)),
+            else => {},
+        }
+    }
+
+    const ram = values.get("ram");
+    if (ram != null) {
+        const entries = ram.?.array;
+        for (entries.items) |entry| {
+            const address = @as(u16, @intCast(entry.array.items[0].integer));
+            const value = @as(u8, @intCast(entry.array.items[1].integer));
+            cpu.writeByte(address, value);
+        }
     }
 }
