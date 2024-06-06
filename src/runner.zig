@@ -172,8 +172,18 @@ pub fn runTest(alloc: Allocator, path: []const u8) !void {
         const regs = try cpu.dumpRegisters(alloc);
         defer alloc.free(regs);
         const memory = try cpu.dumpMemory(alloc);
+        defer alloc.free(memory);
         std.debug.print("CPU before: {s}\n", .{regs});
         std.debug.print("Memory before:\n{s}", .{memory});
+
+        cpu.run(t.cycles.len);
+
+        const regs_after = try cpu.dumpRegisters(alloc);
+        defer alloc.free(regs_after);
+        const memory_after = try cpu.dumpMemory(alloc);
+        defer alloc.free(memory_after);
+        std.debug.print("CPU after: {s}\n", .{regs});
+        std.debug.print("Memory after:\n{s}", .{memory});
 
         std.debug.print("\n", .{});
     }
@@ -185,8 +195,8 @@ fn assignState(comptime T: type, cpu: *T, values: std.ArrayHashMap([]const u8, j
         const name = field.name;
         const value = values.get(name);
         switch (field.type) {
-            u8 => @field(cpu, name) = @as(u8, @intCast(value.?.integer)),
-            u16 => @field(cpu, name) = @as(u16, @intCast(value.?.integer)),
+            u8 => @field(cpu, name) = @intCast(value.?.integer),
+            u16 => @field(cpu, name) = @intCast(value.?.integer),
             else => {},
         }
     }
