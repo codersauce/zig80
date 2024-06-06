@@ -1,3 +1,8 @@
+const std = @import("std");
+const utils = @import("utils.zig");
+const http = std.http;
+const Allocator = std.mem.Allocator;
+
 const Test = struct {
     /// Name of the archive if the file is compressed
     archive_name: ?[]const u8,
@@ -335,3 +340,37 @@ pub const Tests = [_]Test{
         .columns = 32,
     },
 };
+
+pub fn downloadTests(alloc: Allocator) !void {
+    const file = try std.fs.cwd().openFile("support/software.sha3-512", .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    const contents = try file.readToEndAlloc(alloc, stat.size);
+    defer alloc.free(contents);
+
+    std.fs.cwd().makeDir("depot") catch {};
+
+    var it = std.mem.split(u8, contents, "\n");
+    while (it.next()) |line| {
+        if (line.len == 0) {
+            continue;
+        }
+        var iit = std.mem.split(u8, line, "  ");
+        const sha = iit.next().?;
+        _ = sha;
+        const name = iit.next().?;
+        const url = try std.fmt.allocPrint(alloc, "https://zxe.io/depot/software/{s}", .{name});
+        defer alloc.free(url);
+
+        const outname = try std.fmt.allocPrint(alloc, "depot/{s}", .{name});
+        defer alloc.free(outname);
+
+        if (utils.fileExists(outname) catch false) {
+            continue;
+        }
+
+        std.debug.print("downloading: {s}\n", .{outname});
+        try utils.download(alloc, url, outname);
+    }
+}
