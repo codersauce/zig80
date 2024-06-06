@@ -74,6 +74,28 @@ pub const Z80 = struct {
         self.memory[address] = value;
     }
 
+    pub fn fetchByteFromBC(self: *Z80) u8 {
+        const b: u16 = self.b;
+        const c: u16 = self.c;
+        const address = b << 8 | c;
+        return self.memory[address];
+    }
+
+    pub fn start(self: *Z80) void {
+        while (!self.halt) {
+            self.execute();
+        }
+    }
+
+    pub fn run(self: *Z80, cycles: u64) void {
+        std.debug.print("Running for {d} cycles\n", .{cycles});
+        var current_cycle: u64 = 0;
+        while (!self.halt and current_cycle < cycles) {
+            self.execute();
+            current_cycle += 1;
+        }
+    }
+
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
         std.debug.print("pc: {any}\n", .{self.pc});
@@ -91,6 +113,10 @@ pub const Z80 = struct {
                 self.halt = true;
                 return;
             }, // HALT
+            0x0A => {
+                self.a = self.fetchByteFromBC();
+                self.pc += 7;
+            },
             // Add more opcode implementations here
             else => |unknown| {
                 std.debug.panic("Unknown opcode: {}", .{unknown});
@@ -120,11 +146,5 @@ pub const Z80 = struct {
         }
 
         return res.toOwnedSlice();
-    }
-
-    pub fn run(self: *Z80) void {
-        while (!self.halt) {
-            self.execute();
-        }
     }
 };
