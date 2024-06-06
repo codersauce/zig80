@@ -118,7 +118,7 @@ fn parseCycles(alloc: Allocator, entries: std.ArrayList(json.Value)) ![]Cycle {
         const entry = item.array.items;
         const value = switch (entry[1]) {
             .integer => @as(u8, @intCast(entry[1].integer)),
-            else => return undefined,
+            else => undefined,
         };
 
         try results.append(Cycle{
