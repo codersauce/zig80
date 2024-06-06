@@ -52,6 +52,21 @@ pub const Z80 = struct {
         };
     }
 
+    pub fn reset(self: *Z80) void {
+        self.a = 0;
+        self.f = 0;
+        self.b = 0;
+        self.c = 0;
+        self.d = 0;
+        self.e = 0;
+        self.h = 0;
+        self.l = 0;
+        self.pc = 0;
+        self.sp = 0xFFFF;
+        self.halt = false;
+        self.clearMemory();
+    }
+
     // Fetch the next byte from memory
     fn fetchByte(self: *Z80) u8 {
         const byte = self.memory[self.pc];
@@ -126,6 +141,12 @@ pub const Z80 = struct {
 
     pub fn dumpRegisters(self: *Z80, alloc: Allocator) ![]const u8 {
         return try std.fmt.allocPrint(alloc, "a={d} f={d} b={d} c={d} d={d} e={d} h={d} l={d} pc={d} sp={d}", .{ self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l, self.pc, self.sp });
+    }
+
+    pub fn load(self: *Z80, program: []const u8, start_address: u16) void {
+        for (program, 0..) |byte, i| {
+            self.memory[start_address + i] = byte;
+        }
     }
 
     pub fn clearMemory(self: *Z80) void {

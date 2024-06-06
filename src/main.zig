@@ -11,5 +11,5 @@ pub fn main() !void {
     // try runner.runTest(alloc, "SingleStepTests-z80/v1/0a.json");
     // std.debug.print("SingleStepTests-z80/v1/0a.json passed\n", .{});
 
-    try tests.downloadTests(alloc);
+    try tests.run(alloc);
 }

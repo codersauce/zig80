@@ -13,6 +13,20 @@ pub fn fileExists(path: []const u8) !bool {
     return true;
 }
 
+pub fn findFile(alloc: Allocator, path: []const u8, search_path: []const []const u8) !?[]const u8 {
+    for (search_path) |dir| {
+        const full_path = try std.fs.path.join(alloc, &[_][]const u8{ dir, path });
+
+        if (try fileExists(full_path)) {
+            return full_path;
+        } else {
+            alloc.free(full_path);
+        }
+    }
+
+    return null;
+}
+
 pub fn download(alloc: Allocator, url: []const u8, outname: []const u8) !void {
     var client = http.Client{ .allocator = alloc };
     defer client.deinit();
@@ -36,4 +50,54 @@ pub fn download(alloc: Allocator, url: []const u8, outname: []const u8) !void {
 
     const bytes_written = try dest.writeAll(body);
     _ = bytes_written;
+}
+
+pub fn extract(alloc: Allocator, archive: []const u8) !void {
+    const dir = try std.process.getCwdAlloc(alloc);
+    defer alloc.free(dir);
+
+    const archive_path = try std.fs.path.join(alloc, &[_][]const u8{ dir, archive });
+    defer alloc.free(archive_path);
+
+    const outdir_path = std.fs.path.dirname(archive_path).?;
+
+    if (!try fileExists(archive_path)) {
+        std.debug.print("Archive not found: {s}\n", .{archive_path});
+        return;
+    }
+
+    if (!try fileExists(outdir_path)) {
+        std.debug.print("Creating directory: {s}\n", .{outdir_path});
+        try std.fs.cwd().makeDir(outdir_path);
+    }
+
+    if (std.mem.endsWith(u8, archive_path, ".tar.gz")) {
+        // std.debug.print("Extracting {s} to {s}\n", .{ archive_path, outdir_path });
+        try extractTarGz(alloc, archive_path, outdir_path);
+    } else if (std.mem.endsWith(u8, archive_path, ".zip")) {
+        // std.debug.print("Extracting {s} to {s}\n", .{ archive_path, outdir_path });
+        try extractZip(alloc, archive_path, outdir_path);
+    } else {
+        // std.debug.print("Unknown archive type: {s}\n", .{archive_path});
+    }
+}
+
+pub fn extractTarGz(alloc: Allocator, archive_path: []const u8, outdir_path: []const u8) !void {
+    const proc = try std.process.Child.run(.{
+        .allocator = alloc,
+        .argv = &.{ "tar", "-xzf", archive_path, "-C", outdir_path },
+    });
+    defer alloc.free(proc.stdout);
+    defer alloc.free(proc.stderr);
+    // std.debug.print(" *** Output:\n{s}\n", .{proc.stdout});
+}
+
+pub fn extractZip(alloc: Allocator, archive_path: []const u8, outdir_path: []const u8) !void {
+    const proc = try std.process.Child.run(.{
+        .allocator = alloc,
+        .argv = &.{ "unzip", archive_path, "-d", outdir_path },
+    });
+    defer alloc.free(proc.stdout);
+    defer alloc.free(proc.stderr);
+    // std.debug.print(" *** Output:\n{s}\n", .{proc.stdout});
 }

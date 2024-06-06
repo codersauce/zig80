@@ -1,7 +1,94 @@
 const std = @import("std");
-const utils = @import("utils.zig");
 const http = std.http;
 const Allocator = std.mem.Allocator;
+
+const utils = @import("utils.zig");
+const Z80 = @import("cpu.zig").Z80;
+
+const TestError = error{
+    FileNotFound,
+    FileSizeMismatch,
+};
+
+pub fn run(alloc: Allocator) !void {
+    try downloadAndExtract(alloc);
+
+    var cpu = Z80.init();
+    for (Tests) |t| {
+        try runTest(alloc, &cpu, t);
+    }
+}
+
+pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
+    cpu.reset();
+    try loadTest(alloc, cpu, t);
+}
+
+fn loadTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
+    const path = (try utils.findFile(alloc, t.file_path, &.{ "depot/POSIX", "depot/ZX Spectrum" })).?;
+    defer alloc.free(path);
+
+    std.debug.print("running test: {s}\n", .{path});
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    if (stat.size != t.file_size) {
+        return TestError.FileSizeMismatch;
+    }
+
+    // std.debug.print("  - code size: {d}\n", .{t.code_size});
+    // std.debug.print("  - seeking to: {d}\n", .{t.code_offset});
+    // const expected_code_size = t.file_size - t.code_offset;
+    // std.debug.print("  - expected code size: {d}\n", .{expected_code_size});
+    if (t.code_offset > 0) {
+        try file.seekTo(t.code_offset + 1);
+    }
+    const contents = try file.readToEndAlloc(alloc, t.code_size);
+    defer alloc.free(contents);
+
+    cpu.load(contents, t.start_address);
+    // const mem = try cpu.dumpMemory(alloc);
+    // defer alloc.free(mem);
+    // std.debug.print("{s}\n", .{mem});
+    // std.debug.print("\n", .{});
+}
+
+pub fn downloadAndExtract(alloc: Allocator) !void {
+    const file = try std.fs.cwd().openFile("support/software.sha3-512", .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    const contents = try file.readToEndAlloc(alloc, stat.size);
+    defer alloc.free(contents);
+
+    std.fs.cwd().makeDir("depot") catch {};
+
+    var it = std.mem.split(u8, contents, "\n");
+    while (it.next()) |line| {
+        if (line.len == 0) {
+            continue;
+        }
+        var iit = std.mem.split(u8, line, "  ");
+        const sha = iit.next().?;
+        _ = sha;
+        const name = iit.next().?;
+        const url = try std.fmt.allocPrint(alloc, "https://zxe.io/depot/software/{s}", .{name});
+        defer alloc.free(url);
+
+        const outname = try std.fmt.allocPrint(alloc, "depot/{s}", .{name});
+        defer alloc.free(outname);
+
+        if (utils.fileExists(outname) catch false) {
+            continue;
+        }
+
+        std.debug.print("downloading: {s}\n", .{outname});
+        try utils.download(alloc, url, outname);
+        std.debug.print("extracting: {s}\n", .{outname});
+        try utils.extract(alloc, outname);
+    }
+}
 
 const Test = struct {
     /// Name of the archive if the file is compressed
@@ -340,37 +427,3 @@ pub const Tests = [_]Test{
         .columns = 32,
     },
 };
-
-pub fn downloadTests(alloc: Allocator) !void {
-    const file = try std.fs.cwd().openFile("support/software.sha3-512", .{});
-    defer file.close();
-
-    const stat = try file.stat();
-    const contents = try file.readToEndAlloc(alloc, stat.size);
-    defer alloc.free(contents);
-
-    std.fs.cwd().makeDir("depot") catch {};
-
-    var it = std.mem.split(u8, contents, "\n");
-    while (it.next()) |line| {
-        if (line.len == 0) {
-            continue;
-        }
-        var iit = std.mem.split(u8, line, "  ");
-        const sha = iit.next().?;
-        _ = sha;
-        const name = iit.next().?;
-        const url = try std.fmt.allocPrint(alloc, "https://zxe.io/depot/software/{s}", .{name});
-        defer alloc.free(url);
-
-        const outname = try std.fmt.allocPrint(alloc, "depot/{s}", .{name});
-        defer alloc.free(outname);
-
-        if (utils.fileExists(outname) catch false) {
-            continue;
-        }
-
-        std.debug.print("downloading: {s}\n", .{outname});
-        try utils.download(alloc, url, outname);
-    }
-}
