@@ -20,6 +20,7 @@ pub const Z80 = struct {
     memory: [65536]u8,
 
     // Internal state
+    cycles: u64,
     halt: bool,
 
     // Initialize the CPU state
@@ -35,6 +36,7 @@ pub const Z80 = struct {
         const l: u8 = 0;
         const pc: u16 = 0;
         const sp: u16 = 0xFFFF;
+        const cycles: u64 = 0;
 
         return Z80{
             .a = a,
@@ -48,6 +50,7 @@ pub const Z80 = struct {
             .pc = pc,
             .sp = sp,
             .memory = memory,
+            .cycles = cycles,
             .halt = false,
         };
     }
@@ -63,6 +66,7 @@ pub const Z80 = struct {
         self.l = 0;
         self.pc = 0;
         self.sp = 0xFFFF;
+        self.cycles = 0;
         self.halt = false;
         self.clearMemory();
     }
@@ -73,7 +77,7 @@ pub const Z80 = struct {
         if (self.pc == 0xFFFF) {
             self.pc = 0;
         } else {
-            self.pc += 1;
+            self.pc +%= 1;
         }
         return byte;
     }
@@ -104,10 +108,9 @@ pub const Z80 = struct {
 
     pub fn run(self: *Z80, cycles: u64) void {
         std.debug.print("Running for {d} cycles\n", .{cycles});
-        var current_cycle: u64 = 0;
-        while (!self.halt and current_cycle < cycles) {
+        // var current_cycle: u64 = 0;
+        while (!self.halt and self.cycles < cycles) {
             self.execute();
-            current_cycle += 1;
         }
     }
 
@@ -117,24 +120,81 @@ pub const Z80 = struct {
         const opcode = self.fetchByte();
 
         switch (opcode) {
-            0x00 => {}, // NOP
+            0x00 => {
+                // NOP
+                self.cycles += 4;
+            },
             0x01 => {
+                // LD BC, nn
                 const nn = self.fetchWord();
                 self.b = @as(u8, @intCast(nn >> 8));
                 self.c = @as(u8, @intCast(nn & 0xFF));
             },
+            0x09 => {
+                // ADD HL, BC
+                const bc: u16 = (@as(u16, self.b) << 8) | self.c;
+                const hl: u16 = (@as(u16, self.h) << 8) | self.l;
+                const result: u16 = hl + bc;
+                self.h = @as(u8, @intCast(result >> 8));
+                self.l = @as(u8, @intCast(result & 0xFF));
+                self.f = 0;
+                if (result > 0xFFFF) {
+                    self.f |= 0x10;
+                }
+                self.cycles += 11;
+                self.pc +%= 1;
+            },
             0x76 => {
                 std.debug.print("HALT\n", .{});
+                self.pc +%= 1;
+                self.cycles += 4;
                 self.halt = true;
                 return;
-            }, // HALT
-            0x0A => {
-                self.a = self.fetchByteFromBC();
-                self.pc += 7;
             },
-            // Add more opcode implementations here
-            else => |unknown| {
-                std.debug.panic("Unknown opcode: {}", .{unknown});
+            0x0A => {
+                // HALT
+                self.a = self.fetchByteFromBC();
+                self.pc +%= 7;
+            },
+            0x1D => {
+                // DEC B
+                self.e -%= 1;
+                self.pc +%= 1;
+            },
+            0x2A => {
+                // LD HL, (nn)
+                const nn = self.fetchWord();
+                const lowByte = self.memory[nn];
+                const highByte = self.memory[nn + 1];
+                self.l = lowByte;
+                self.h = highByte;
+                self.cycles += 16;
+                self.pc +%= 3;
+            },
+            0xC3 => {
+                // JP nn
+                const hhll = self.fetchWord();
+                self.pc = hhll;
+                self.cycles += 10;
+            },
+            0xCE => {
+                // ADC A, n
+                const n = self.fetchByte();
+                const carry = (self.f & 0x10) >> 4;
+                const result = self.a + n + carry;
+                self.f = 0;
+                if (result > 0xFF) {
+                    self.f |= 0x10;
+                }
+                if (result == 0) {
+                    self.f |= 0x80;
+                }
+                self.a = @as(u8, @intCast(result & 0xFF));
+                self.cycles += 7;
+                self.pc +%= 2;
+            },
+            else => |code| {
+                std.debug.panic("Unknown opcode: {} {x}", .{ code, code });
             },
         }
     }

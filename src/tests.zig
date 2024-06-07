@@ -22,13 +22,14 @@ pub fn run(alloc: Allocator) !void {
 pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
     cpu.reset();
     try loadTest(alloc, cpu, t);
+    std.debug.print("running test: {s}\n", .{t.file_path});
+    cpu.run(t.cycles);
 }
 
 fn loadTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
     const path = (try utils.findFile(alloc, t.file_path, &.{ "depot/POSIX", "depot/ZX Spectrum" })).?;
     defer alloc.free(path);
 
-    std.debug.print("running test: {s}\n", .{path});
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
@@ -48,6 +49,7 @@ fn loadTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
     defer alloc.free(contents);
 
     cpu.load(contents, t.start_address);
+    cpu.pc = t.start_address;
     // const mem = try cpu.dumpMemory(alloc);
     // defer alloc.free(mem);
     // std.debug.print("{s}\n", .{mem});
