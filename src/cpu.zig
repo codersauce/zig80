@@ -116,8 +116,8 @@ pub const Z80 = struct {
 
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
-        std.debug.print("pc: {any}\n", .{self.pc});
         const opcode = self.fetchByte();
+        std.debug.print("pc: {0X:0>4}{0d: >5} opcode: {1d: >3} {1X:0>2}\n", .{ self.pc, opcode });
 
         switch (opcode) {
             0x00 => {
@@ -194,7 +194,7 @@ pub const Z80 = struct {
                 self.pc +%= 2;
             },
             else => |code| {
-                std.debug.panic("Unknown opcode: {} {x}", .{ code, code });
+                std.debug.panic("Unknown opcode: {0d: >3} {0X:0>2}", .{code});
             },
         }
     }
