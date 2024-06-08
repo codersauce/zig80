@@ -4,11 +4,14 @@ const Allocator = std.mem.Allocator;
 
 const utils = @import("utils.zig");
 const Z80 = @import("cpu.zig").Z80;
+const c = @import("Z80.zig");
 
 const TestError = error{
     FileNotFound,
     FileSizeMismatch,
 };
+
+var memory: [0x10000]u8 = undefined; // 64KB
 
 pub fn run(alloc: Allocator) !void {
     try downloadAndExtract(alloc);
@@ -20,13 +23,97 @@ pub fn run(alloc: Allocator) !void {
 }
 
 pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
+    var bench_cpu = c.Z80{};
+    bench_cpu.context = null;
+    bench_cpu.nmia = null;
+    bench_cpu.inta = null;
+    bench_cpu.int_fetch = null;
+    bench_cpu.ld_i_a = null;
+    bench_cpu.ld_r_a = null;
+    bench_cpu.reti = null;
+    bench_cpu.retn = null;
+    bench_cpu.illegal = null;
+    bench_cpu.options = c.Z80_MODEL_ZILOG_NMOS;
+    bench_cpu.in = cpuIn;
+    bench_cpu.out = cpuOut;
+    bench_cpu.nop = cpuRead;
+    bench_cpu.fetch = cpuRead;
+    bench_cpu.read = cpuRead;
+    bench_cpu.halt = cpuHalt;
+
     cpu.reset();
-    try loadTest(alloc, cpu, t);
+    try loadTest(alloc, cpu, &bench_cpu, t);
     std.debug.print("running test: {s}\n", .{t.file_path});
+
+    startTest(cpu, &bench_cpu, t);
+}
+
+fn cpuIn(context: ?*anyopaque, port: u16) callconv(.C) u8 {
+    _ = context;
+    std.debug.print("in: {x}\n", .{port});
+    return 0;
+}
+
+fn cpuOut(context: ?*anyopaque, port: u16, value: u8) callconv(.C) void {
+    _ = context;
+    std.debug.print("out: {x} {x}\n", .{ port, value });
+}
+
+fn cpuHalt(context: ?*anyopaque, state: u8) callconv(.C) void {
+    _ = context;
+    std.debug.print("halt: {x}\n", .{state});
+}
+
+fn cpuRead(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+    _ = context;
+    const opcode = memory[address];
+    std.debug.print("[{0X:0>4}] opcode: {1X:0>2}\n", .{ address, opcode });
+    return memory[address];
+}
+
+fn cpmCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+    _ = context;
+    std.debug.print("write: {x} {x}\n", .{ address, value });
+    memory[address] = value;
+}
+
+fn cpmCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+    _ = context;
+    std.debug.print("hook: {x}\n", .{address});
+    return 0;
+}
+
+fn startTest(cpu: *Z80, bench_cpu: *c.Z80, t: Test) void {
+    std.debug.print("running test: {s}\n", .{t.file_path});
+
+    std.debug.print("bench pc: {x}\n", .{bench_cpu.pc.uint16_value});
+    const cycles = c.z80_run(bench_cpu, 1);
+    std.debug.print("bench pc: {x}\n", .{bench_cpu.pc.uint16_value});
+    std.debug.print("bench cycles: {d}\n", .{cycles});
+
     cpu.run(t.cycles);
 }
 
-fn loadTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
+fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
+    const contents = try loadTestFile(alloc, t);
+    defer alloc.free(contents);
+
+    cpu.load(contents, t.start_address);
+    cpu.pc = t.start_address;
+
+    // load program into benchmark cpu memory
+    @memset(&memory, 0);
+    @memcpy(memory[t.start_address .. t.start_address + contents.len], contents);
+
+    c.z80_power(bench_cpu, true);
+
+    bench_cpu.fetch_opcode = cpuRead;
+    bench_cpu.write = cpmCpuWrite;
+    bench_cpu.hook = cpmCpuHook;
+    bench_cpu.pc.uint16_value = t.start_address;
+}
+
+fn loadTestFile(alloc: Allocator, t: Test) ![]const u8 {
     const path = (try utils.findFile(alloc, t.file_path, &.{ "depot/POSIX", "depot/ZX Spectrum" })).?;
     defer alloc.free(path);
 
@@ -38,22 +125,8 @@ fn loadTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
         return TestError.FileSizeMismatch;
     }
 
-    // std.debug.print("  - code size: {d}\n", .{t.code_size});
-    // std.debug.print("  - seeking to: {d}\n", .{t.code_offset});
-    // const expected_code_size = t.file_size - t.code_offset;
-    // std.debug.print("  - expected code size: {d}\n", .{expected_code_size});
-    if (t.code_offset > 0) {
-        try file.seekTo(t.code_offset + 1);
-    }
-    const contents = try file.readToEndAlloc(alloc, t.code_size);
-    defer alloc.free(contents);
-
-    cpu.load(contents, t.start_address);
-    cpu.pc = t.start_address;
-    // const mem = try cpu.dumpMemory(alloc);
-    // defer alloc.free(mem);
-    // std.debug.print("{s}\n", .{mem});
-    // std.debug.print("\n", .{});
+    const contents = try file.readToEndAlloc(alloc, stat.size);
+    return contents;
 }
 
 pub fn downloadAndExtract(alloc: Allocator) !void {
