@@ -3,14 +3,10 @@ const Allocator = std.mem.Allocator;
 
 pub const Z80 = struct {
     // 8-bit registers
-    a: u8,
-    f: u8,
-    b: u8,
-    c: u8,
-    d: u8,
-    e: u8,
-    h: u8,
-    l: u8,
+    af: u16,
+    bc: u16,
+    de: u16,
+    hl: u16,
 
     // 16-bit registers
     pc: u16,
@@ -26,27 +22,19 @@ pub const Z80 = struct {
     // Initialize the CPU state
     pub fn init() Z80 {
         const memory: [65536]u8 = [_]u8{0} ** 65536;
-        const a: u8 = 0;
-        const f: u8 = 0;
-        const b: u8 = 0;
-        const c: u8 = 0;
-        const d: u8 = 0;
-        const e: u8 = 0;
-        const h: u8 = 0;
-        const l: u8 = 0;
+        const af: u16 = 0;
+        const bc: u16 = 0;
+        const de: u16 = 0;
+        const hl: u16 = 0;
         const pc: u16 = 0;
         const sp: u16 = 0xFFFF;
         const cycles: u64 = 0;
 
         return Z80{
-            .a = a,
-            .f = f,
-            .b = b,
-            .c = c,
-            .d = d,
-            .e = e,
-            .h = h,
-            .l = l,
+            .af = af,
+            .bc = bc,
+            .de = de,
+            .hl = hl,
             .pc = pc,
             .sp = sp,
             .memory = memory,
@@ -56,19 +44,93 @@ pub const Z80 = struct {
     }
 
     pub fn reset(self: *Z80) void {
-        self.a = 0xFF;
-        self.f = 0xFF;
-        self.b = 0xFF;
-        self.c = 0xFF;
-        self.d = 0xFF;
-        self.e = 0xFF;
-        self.h = 0xFF;
-        self.l = 0xFF;
-        self.pc = 0xFF;
+        self.af = 0xFFFF;
+        self.bc = 0xFFFF;
+        self.de = 0xFFFF;
+        self.hl = 0xFFFF;
+        self.pc = 0xFFFF;
         self.sp = 0xFFFF;
         self.cycles = 0;
         self.halt = false;
         self.clearMemory();
+    }
+
+    pub fn getA(self: *Z80) u8 {
+        return @intCast(self.af >> 8);
+    }
+
+    pub fn getF(self: *Z80) u8 {
+        return @intCast(self.af & 0xFF);
+    }
+
+    pub fn getB(self: *Z80) u8 {
+        return @intCast(self.bc >> 8);
+    }
+
+    pub fn getC(self: *Z80) u8 {
+        return @intCast(self.bc & 0xFF);
+    }
+
+    pub fn getD(self: *Z80) u8 {
+        return @intCast(self.de >> 8);
+    }
+
+    pub fn getE(self: *Z80) u8 {
+        return @intCast(self.de & 0xFF);
+    }
+
+    pub fn getH(self: *Z80) u8 {
+        return @intCast(self.hl >> 8);
+    }
+
+    pub fn getL(self: *Z80) u8 {
+        return @intCast(self.hl & 0xFF);
+    }
+
+    fn withLowByte(val: u16, low: u8) u16 {
+        return (val & 0xFF00) | low;
+    }
+
+    fn withHighByte(val: u16, high: u8) u16 {
+        return (val & 0x00FF) | (@as(u16, high) << 8);
+    }
+
+    pub fn setA(self: *Z80, v: u8) void {
+        self.af = withHighByte(self.af, v);
+    }
+
+    pub fn setF(self: *Z80, v: u8) void {
+        self.af = withLowByte(self.af, v);
+    }
+
+    pub fn setB(self: *Z80, v: u8) void {
+        self.bc = withHighByte(self.bc, v);
+    }
+
+    pub fn setC(self: *Z80, v: u8) void {
+        self.bc = withLowByte(self.bc, v);
+    }
+
+    pub fn setD(self: *Z80, v: u8) void {
+        self.de = withHighByte(self.de, v);
+    }
+
+    pub fn setE(self: *Z80, v: u8) void {
+        self.de = withLowByte(self.de, v);
+    }
+
+    pub fn setH(self: *Z80, v: u8) void {
+        self.hl = withHighByte(self.hl, v);
+    }
+
+    pub fn setL(self: *Z80, v: u8) void {
+        self.hl = withLowByte(self.hl, v);
+    }
+
+    pub fn decE(self: *Z80) void {
+        var e = self.getE();
+        e -%= 1;
+        self.setE(e);
     }
 
     // Fetch the next byte from memory
@@ -91,13 +153,6 @@ pub const Z80 = struct {
 
     pub fn writeByte(self: *Z80, address: u16, value: u8) void {
         self.memory[address] = value;
-    }
-
-    pub fn fetchByteFromBC(self: *Z80) u8 {
-        const b: u16 = self.b;
-        const c: u16 = self.c;
-        const address = b << 8 | c;
-        return self.memory[address];
     }
 
     pub fn start(self: *Z80) void {
@@ -126,57 +181,50 @@ pub const Z80 = struct {
                 self.cycles += 4;
             },
             0x01 => {
-                //uLD BC, nn
-                const nn = self.fetchWord();
-                self.b = @as(u8, @intCast(nn >> 8));
-                self.c = @as(u8, @intCast(nn & 0xFF));
+                // LD BC, nn
+                self.bc = self.fetchWord();
             },
             0x09 => {
                 // ADD HL, BC
-                const bc: u16 = (@as(u16, self.b) << 8) | self.c;
-                const hl: u16 = (@as(u16, self.h) << 8) | self.l;
-                const result: u16 = hl + bc;
-                self.h = @as(u8, @intCast(result >> 8));
-                self.l = @as(u8, @intCast(result & 0xFF));
-                self.f = 0;
-                if (result > 0xFFFF) {
-                    self.f |= 0x10;
+                const sum: u32 = self.hl + self.bc;
+                self.hl +|= self.bc;
+
+                if (sum > 0xFFFF) {
+                    self.setF(self.getF() | 0x10);
+                } else {
+                    self.setF(self.getF() & 0xEF);
                 }
+
                 self.cycles += 11;
                 self.pc +%= 1;
             },
             0x0E => {
                 // LD C, n
-                self.c = self.fetchByte();
+                self.setC(self.fetchByte());
                 self.cycles += 7;
             },
             0x11 => {
                 // LD DE, nn
-                const nn = self.fetchWord();
-                self.d = @as(u8, @intCast(nn >> 8));
-                self.e = @as(u8, @intCast(nn & 0xFF));
+                self.de = self.fetchWord();
                 self.cycles += 10;
             },
             0x0A => {
-                // HALT
-                self.a = self.fetchByteFromBC();
+                // LD A, (BC)
+                self.setA(self.memory[self.bc]);
                 self.pc +%= 7;
             },
             0x1D => {
-                // DEC B
-                self.e -%= 1;
+                // DEC E
+                self.decE();
                 self.pc +%= 1;
             },
             0x2A => {
                 // LD HL, (nn)
-                const nn = self.fetchWord();
-                const lowByte = self.memory[nn];
-                const highByte = self.memory[nn + 1];
-                self.l = lowByte;
-                self.h = highByte;
+                self.hl = self.memory[self.fetchWord()];
                 self.cycles += 16;
             },
             0x76 => {
+                // HALT
                 std.debug.print("HALT\n", .{});
                 self.pc +%= 1;
                 self.cycles += 4;
@@ -185,40 +233,62 @@ pub const Z80 = struct {
             },
             0xC3 => {
                 // JP nn
-                const hhll = self.fetchWord();
-                self.pc = hhll;
+                self.pc = self.fetchWord();
                 self.cycles += 10;
+            },
+            0xC5 => {
+                // PUSH BC
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getB();
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getC();
+                self.cycles += 11;
             },
             0xCD => {
                 // CALL nn
                 // The current PC value plus three is pushed onto the stack, then is loaded with nn.
-                const nn = self.fetchWord();
                 self.sp -%= 1;
                 self.memory[self.sp] = @as(u8, @intCast((self.pc + 3) >> 8));
                 self.sp -%= 1;
                 self.memory[self.sp] = @as(u8, @intCast((self.pc + 3) & 0xFF));
-                self.pc = nn;
+                self.pc = self.fetchWord();
                 self.cycles += 17;
             },
             0xCE => {
                 // ADC A, n
                 const n = self.fetchByte();
-                const carry = (self.f & 0x10) >> 4;
-                const result = self.a + n + carry;
-                self.f = 0;
+                const carry = (self.getF() & 0x10) >> 4;
+                const result = self.getA() + n + carry;
+                self.setF(0);
                 if (result > 0xFF) {
-                    self.f |= 0x10;
+                    self.setF(self.getF() | 0x10);
                 }
                 if (result == 0) {
-                    self.f |= 0x80;
+                    self.setF(self.getF() | 0x80);
                 }
-                self.a = @as(u8, @intCast(result & 0xFF));
+                self.setA(@as(u8, @intCast(result & 0xFF)));
                 self.cycles += 7;
                 self.pc +%= 2;
             },
+            0xD5 => {
+                // PUSH DE
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getD();
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getE();
+                self.cycles += 11;
+            },
+            0xF5 => {
+                // PUSH AF
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getA();
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getF();
+                self.cycles += 11;
+            },
             0xF9 => {
                 // LD SP, HL
-                self.sp = (@as(u16, self.h) << 8) | self.l;
+                self.sp = self.hl;
                 self.cycles += 6;
             },
             else => |code| {
@@ -228,7 +298,7 @@ pub const Z80 = struct {
     }
 
     pub fn dumpState(self: *Z80, alloc: Allocator) ![]const u8 {
-        return try std.fmt.allocPrint(alloc, "[cpu] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} pc={X:0>4} sp={X:0>4}", .{ self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l, self.pc, self.sp });
+        return try std.fmt.allocPrint(alloc, "[cpu] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} pc={X:0>4} sp={X:0>4}", .{ self.getA(), self.getF(), self.getB(), self.getC(), self.getD(), self.getE(), self.getH(), self.getL(), self.pc, self.sp });
     }
 
     pub fn load(self: *Z80, program: []const u8, start_address: u16) void {
