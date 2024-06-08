@@ -56,15 +56,15 @@ pub const Z80 = struct {
     }
 
     pub fn reset(self: *Z80) void {
-        self.a = 0;
-        self.f = 0;
-        self.b = 0;
-        self.c = 0;
-        self.d = 0;
-        self.e = 0;
-        self.h = 0;
-        self.l = 0;
-        self.pc = 0;
+        self.a = 0xFF;
+        self.f = 0xFF;
+        self.b = 0xFF;
+        self.c = 0xFF;
+        self.d = 0xFF;
+        self.e = 0xFF;
+        self.h = 0xFF;
+        self.l = 0xFF;
+        self.pc = 0xFF;
         self.sp = 0xFFFF;
         self.cycles = 0;
         self.halt = false;
@@ -74,12 +74,12 @@ pub const Z80 = struct {
     // Fetch the next byte from memory
     fn fetchByte(self: *Z80) u8 {
         const byte = self.memory[self.pc];
-        if (self.pc == 0xFFFF) {
-            self.pc = 0;
-        } else {
-            self.pc +%= 1;
-        }
+        self.pc +%= 1;
         return byte;
+    }
+
+    fn peekByte(self: *Z80) u8 {
+        return self.memory[self.pc];
     }
 
     // Fetch the next word (2 bytes) from memory
@@ -107,17 +107,19 @@ pub const Z80 = struct {
     }
 
     pub fn run(self: *Z80, cycles: u64) void {
+        const initial_cycles = self.cycles;
         std.debug.print("Running for {d} cycles\n", .{cycles});
         // var current_cycle: u64 = 0;
-        while (!self.halt and self.cycles < cycles) {
+        while (!self.halt and self.cycles < initial_cycles + cycles) {
+            std.debug.print("Running cycle {d}\n", .{self.cycles});
             self.execute();
         }
     }
 
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
+        std.debug.print("[cpu  ] pc={0X:0>4} opcode={1X:0>2}\n", .{ self.pc, self.peekByte() });
         const opcode = self.fetchByte();
-        std.debug.print("pc: {0X:0>4}{0d: >5} opcode: {1d: >3} {1X:0>2}\n", .{ self.pc, opcode });
 
         switch (opcode) {
             0x00 => {
@@ -125,7 +127,7 @@ pub const Z80 = struct {
                 self.cycles += 4;
             },
             0x01 => {
-                // LD BC, nn
+                //uLD BC, nn
                 const nn = self.fetchWord();
                 self.b = @as(u8, @intCast(nn >> 8));
                 self.c = @as(u8, @intCast(nn & 0xFF));
@@ -144,12 +146,17 @@ pub const Z80 = struct {
                 self.cycles += 11;
                 self.pc +%= 1;
             },
-            0x76 => {
-                std.debug.print("HALT\n", .{});
-                self.pc +%= 1;
-                self.cycles += 4;
-                self.halt = true;
-                return;
+            0x0E => {
+                // LD C, n
+                self.c = self.fetchByte();
+                self.cycles += 7;
+            },
+            0x11 => {
+                // LD DE, nn
+                const nn = self.fetchWord();
+                self.d = @as(u8, @intCast(nn >> 8));
+                self.e = @as(u8, @intCast(nn & 0xFF));
+                self.cycles += 10;
             },
             0x0A => {
                 // HALT
@@ -169,13 +176,29 @@ pub const Z80 = struct {
                 self.l = lowByte;
                 self.h = highByte;
                 self.cycles += 16;
-                self.pc +%= 3;
+            },
+            0x76 => {
+                std.debug.print("HALT\n", .{});
+                self.pc +%= 1;
+                self.cycles += 4;
+                self.halt = true;
+                return;
             },
             0xC3 => {
                 // JP nn
                 const hhll = self.fetchWord();
                 self.pc = hhll;
                 self.cycles += 10;
+            },
+            0xCD => {
+                // CALL nn
+                const nn = self.fetchWord();
+                self.sp -%= 2;
+                self.memory[self.sp] = @as(u8, @intCast(self.pc >> 8));
+                self.sp -%= 1;
+                self.memory[self.sp] = @as(u8, @intCast(self.pc & 0xFF));
+                self.pc = nn;
+                self.cycles += 17;
             },
             0xCE => {
                 // ADC A, n
@@ -193,14 +216,19 @@ pub const Z80 = struct {
                 self.cycles += 7;
                 self.pc +%= 2;
             },
+            0xF9 => {
+                // LD SP, HL
+                self.sp = (@as(u16, self.h) << 8) | self.l;
+                self.cycles += 6;
+            },
             else => |code| {
                 std.debug.panic("Unknown opcode: {0d: >3} {0X:0>2}", .{code});
             },
         }
     }
 
-    pub fn dumpRegisters(self: *Z80, alloc: Allocator) ![]const u8 {
-        return try std.fmt.allocPrint(alloc, "a={d} f={d} b={d} c={d} d={d} e={d} h={d} l={d} pc={d} sp={d}", .{ self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l, self.pc, self.sp });
+    pub fn dumpState(self: *Z80, alloc: Allocator) ![]const u8 {
+        return try std.fmt.allocPrint(alloc, "[cpu] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} pc={X:0>4} sp={X:0>4}", .{ self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l, self.pc, self.sp });
     }
 
     pub fn load(self: *Z80, program: []const u8, start_address: u16) void {

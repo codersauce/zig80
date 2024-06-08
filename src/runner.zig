@@ -169,7 +169,7 @@ pub fn runTest(alloc: Allocator, path: []const u8) !void {
         cpu.clearMemory();
         assignState(Z80, &cpu, t.initialValue);
 
-        const regs = try cpu.dumpRegisters(alloc);
+        const regs = try cpu.dumpState(alloc);
         defer alloc.free(regs);
         const memory = try cpu.dumpMemory(alloc);
         defer alloc.free(memory);
@@ -178,7 +178,7 @@ pub fn runTest(alloc: Allocator, path: []const u8) !void {
 
         cpu.run(t.cycles.len);
 
-        const regs_after = try cpu.dumpRegisters(alloc);
+        const regs_after = try cpu.dumpState(alloc);
         defer alloc.free(regs_after);
         const memory_after = try cpu.dumpMemory(alloc);
         defer alloc.free(memory_after);
