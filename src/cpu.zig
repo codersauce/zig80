@@ -133,6 +133,48 @@ pub const Z80 = struct {
         self.setE(e);
     }
 
+    fn getFlag(self: *Z80) Flag {
+        return Flag.init(self.getF());
+    }
+
+    pub fn inc(self: *Z80, v: u8) u8 {
+        const res = v +% 1;
+        var flag = self.getFlag();
+        std.debug.print("flag before: ", .{});
+        flag.dump();
+
+        //  Bit 	7 	6 	5 	4 	3 	2 	1 	0
+        // Flag 	S 	Z 	F5 	H 	F3 	P/V 	N 	C
+        // Hex      80 40 20 10 08 04 02 01
+
+        // set sign if bit 0 is set, indicating negative number
+        flag.setSign(res & 0x80 == 0x80);
+
+        // set zero flag if result is zero
+        flag.setZero(res == 0);
+
+        // sets F5 (aka Y) to bit 5 of the result
+        flag.setF5(res & 0x20 == 0x20);
+
+        // if lower nibble is 0, then half carry
+        flag.setHalfCarry(v & 0x0F == 0x0F);
+
+        // sets F3 (aka X) to bit 3 of the result
+        flag.setF3(res & 0x08 == 0x08);
+
+        // if original value was 0x7F, then overflow
+        flag.setParityOverflow(v == 0x7F);
+
+        // set subtract to false
+        flag.setSubtract(false);
+
+        std.debug.print("flag after: ", .{});
+        flag.dump();
+
+        self.setF(flag.get());
+        return res;
+    }
+
     // Fetch the next byte from memory
     fn fetchByte(self: *Z80) u8 {
         const byte = self.memory[self.pc];
@@ -165,8 +207,12 @@ pub const Z80 = struct {
         const initial_cycles = self.cycles;
         // std.debug.print("Running for {d} cycles\n", .{cycles});
         while (!self.halt and self.cycles < initial_cycles + cycles) {
+            const cur_cycle = self.cycles;
             // std.debug.print("Running cycle {d}\n", .{self.cycles});
             self.execute();
+            if (cur_cycle == self.cycles) {
+                std.debug.panic("No cycles were consumed (opcode {X:0>2})\n", .{self.peekByte()});
+            }
         }
     }
 
@@ -323,5 +369,134 @@ pub const Z80 = struct {
         }
 
         return res.toOwnedSlice();
+    }
+};
+
+pub const Flag = struct {
+    value: u8,
+
+    pub fn init(value: u8) Flag {
+        return Flag{ .value = value };
+    }
+
+    pub fn reset(self: *Flag) void {
+        self.value = 0;
+    }
+
+    pub fn get(self: *Flag) u8 {
+        return self.value;
+    }
+
+    //  Bit 	7 	6 	5 	4 	3 	2 	1 	0
+    // Flag 	S 	Z 	F5 	H 	F3 	P/V 	N 	C
+    // Hex      80 40 20 10 08 04 02 01
+
+    pub fn getSign(self: *Flag) bool {
+        return (self.value & 0x80) != 0;
+    }
+
+    pub fn getZero(self: *Flag) bool {
+        return (self.value & 0x40) != 0;
+    }
+
+    pub fn getF5(self: *Flag) bool {
+        return (self.value & 0x20) != 0;
+    }
+
+    pub fn getHalfCarry(self: *Flag) bool {
+        return (self.value & 0x10) != 0;
+    }
+
+    pub fn getF3(self: *Flag) bool {
+        return (self.value & 0x08) != 0;
+    }
+
+    pub fn getParityOverflow(self: *Flag) bool {
+        return (self.value & 0x04) != 0;
+    }
+
+    pub fn getSubtract(self: *Flag) bool {
+        return (self.value & 0x02) != 0;
+    }
+
+    pub fn getCarry(self: *Flag) bool {
+        return (self.value & 0x01) != 0;
+    }
+
+    pub fn setSign(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b1000_0000;
+        } else {
+            self.value &= 0b0111_1111;
+        }
+    }
+
+    pub fn setZero(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0100_0000;
+        } else {
+            self.value &= 0b1011_1111;
+        }
+    }
+
+    pub fn setF5(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0010_0000;
+        } else {
+            self.value &= 0b1101_1111;
+        }
+    }
+
+    pub fn setHalfCarry(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0001_0000;
+        } else {
+            self.value &= 0b1110_1111;
+        }
+    }
+
+    pub fn setF3(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0000_1000;
+        } else {
+            self.value &= 0b1111_0111;
+        }
+    }
+
+    pub fn setParityOverflow(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0000_0100;
+        } else {
+            self.value &= 0b1111_1011;
+        }
+    }
+
+    pub fn setSubtract(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0000_0010;
+        } else {
+            self.value &= 0b1111_1101;
+        }
+    }
+
+    pub fn setCarry(self: *Flag, value: bool) void {
+        if (value) {
+            self.value |= 0b0000_0001;
+        } else {
+            self.value &= 0b1111_1110;
+        }
+    }
+
+    pub fn dump(self: *Flag) void {
+        const s = if (self.getSign()) "1" else "0";
+        const z = if (self.getZero()) "1" else "0";
+        const f5 = if (self.getF5()) "1" else "0";
+        const h = if (self.getHalfCarry()) "1" else "0";
+        const f3 = if (self.getF3()) "1" else "0";
+        const p_v = if (self.getParityOverflow()) "1" else "0";
+        const n = if (self.getSubtract()) "1" else "0";
+        const c = if (self.getCarry()) "1" else "0";
+
+        std.debug.print("S={s} Z={s} F5={s} H={s} F3={s} P/V={s} N={s} C={s}\n", .{ s, z, f5, h, f3, p_v, n, c });
     }
 };

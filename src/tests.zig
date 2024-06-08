@@ -3,7 +3,9 @@ const http = std.http;
 const Allocator = std.mem.Allocator;
 
 const utils = @import("utils.zig");
-const Z80 = @import("cpu.zig").Z80;
+const cpu_import = @import("cpu.zig");
+const Z80 = cpu_import.Z80;
+const Flag = cpu_import.Flag;
 const c = @import("Z80.zig");
 
 const TestError = error{
@@ -18,9 +20,10 @@ pub fn run(alloc: Allocator) !void {
     try downloadAndExtract(alloc);
 
     var cpu = Z80.init();
-    for (Tests) |t| {
-        try runTest(alloc, &cpu, t);
-        break;
+    for (Tests, 0..) |t, i| {
+        if (i == 1) {
+            try runTest(alloc, &cpu, t);
+        }
     }
 }
 
@@ -52,7 +55,7 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
     try loadTest(alloc, cpu, &bench_cpu, t);
     std.debug.print("running test: {s}\n", .{t.file_path});
 
-    for (0..10) |_| {
+    for (0..200) |_| {
         try step(alloc, cpu, &bench_cpu);
     }
 }
@@ -166,12 +169,21 @@ fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
     const lv = bench_cpu.hl.uint16_value & 0xFF;
 
     if (cpu.getA() != av) {
-        std.debug.print("a expected: {X:0>2} actual: {X:0>2}", .{ av, cpu.getA() });
+        std.debug.print("a expected: {X:0>2} actual: {X:0>2}\n", .{ av, cpu.getA() });
         errors += 1;
     }
 
     if (cpu.getF() != fv) {
         std.debug.print("f expected: {X:0>2} actual: {X:0>2}\n", .{ fv, cpu.getF() });
+
+        var expected_flags = Flag.init(@as(u8, @intCast(fv)));
+        std.debug.print("  their flags: ", .{});
+        expected_flags.dump();
+
+        var actual_flags = Flag.init(cpu.getF());
+        std.debug.print("  our   flags: ", .{});
+        actual_flags.dump();
+
         errors += 1;
     }
 
