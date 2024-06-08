@@ -1,6 +1,7 @@
 ## Build output
 zig-out/
 zig-cache/
+.zig-cache/
 
 ## Executables and Libraries
 *.o
