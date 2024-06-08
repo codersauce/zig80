@@ -108,10 +108,9 @@ pub const Z80 = struct {
 
     pub fn run(self: *Z80, cycles: u64) void {
         const initial_cycles = self.cycles;
-        std.debug.print("Running for {d} cycles\n", .{cycles});
-        // var current_cycle: u64 = 0;
+        // std.debug.print("Running for {d} cycles\n", .{cycles});
         while (!self.halt and self.cycles < initial_cycles + cycles) {
-            std.debug.print("Running cycle {d}\n", .{self.cycles});
+            // std.debug.print("Running cycle {d}\n", .{self.cycles});
             self.execute();
         }
     }
