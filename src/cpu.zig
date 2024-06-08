@@ -191,11 +191,12 @@ pub const Z80 = struct {
             },
             0xCD => {
                 // CALL nn
+                // The current PC value plus three is pushed onto the stack, then is loaded with nn.
                 const nn = self.fetchWord();
-                self.sp -%= 2;
-                self.memory[self.sp] = @as(u8, @intCast(self.pc >> 8));
                 self.sp -%= 1;
-                self.memory[self.sp] = @as(u8, @intCast(self.pc & 0xFF));
+                self.memory[self.sp] = @as(u8, @intCast((self.pc + 3) >> 8));
+                self.sp -%= 1;
+                self.memory[self.sp] = @as(u8, @intCast((self.pc + 3) & 0xFF));
                 self.pc = nn;
                 self.cycles += 17;
             },
