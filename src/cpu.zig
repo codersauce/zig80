@@ -254,28 +254,79 @@ pub const Z80 = struct {
                 self.de = self.fetchWord();
                 self.cycles += 10;
             },
+            0x13 => {
+                // INC DE
+                self.de +%= 1;
+                self.cycles += 6;
+            },
             0x0A => {
                 // LD A, (BC)
                 self.setA(self.memory[self.bc]);
                 self.pc +%= 7;
+                self.cycles += 7;
             },
             0x1D => {
                 // DEC E
                 self.decE();
                 self.pc +%= 1;
+                self.cycles += 4;
+            },
+            0x20 => {
+                // JR NZ, n
+                const offset = self.fetchByte();
+                if ((self.getF() & 0x80) == 0) {
+                    self.pc += offset;
+                    self.cycles += 12;
+                } else {
+                    self.cycles += 7;
+                }
             },
             0x2A => {
                 // LD HL, (nn)
                 self.hl = self.memory[self.fetchWord()];
                 self.cycles += 16;
             },
+            0x2C => {
+                // INC L
+                self.setL(self.inc(self.getL()));
+                self.cycles += 4;
+            },
+            0x63 => {
+                // LD H, E
+                self.setH(self.getE());
+                self.cycles += 4;
+            },
+            0x64 => {
+                // LD H, H
+                self.setH(self.getH());
+                self.cycles += 4;
+            },
+            0x65 => {
+                // LD H, L
+                self.setH(self.getL());
+                self.cycles += 4;
+            },
+            0x6F => {
+                // LD L, A
+                self.setL(self.getA());
+                self.cycles += 4;
+            },
             0x76 => {
                 // HALT
                 std.debug.print("HALT\n", .{});
-                self.pc +%= 1;
                 self.cycles += 4;
                 self.halt = true;
                 return;
+            },
+            0x7A => {
+                // LD A, D
+                self.setA(self.getD());
+                self.cycles += 4;
+            },
+            0x78 => {
+                // LD A, B
+                self.setA(self.getB());
+                self.cycles += 4;
             },
             0xC3 => {
                 // JP nn
@@ -322,6 +373,14 @@ pub const Z80 = struct {
                 self.memory[self.sp] = self.getD();
                 self.sp -%= 1;
                 self.memory[self.sp] = self.getE();
+                self.cycles += 11;
+            },
+            0xE5 => {
+                // PUSH HL
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getH();
+                self.sp -%= 1;
+                self.memory[self.sp] = self.getL();
                 self.cycles += 11;
             },
             0xF5 => {
