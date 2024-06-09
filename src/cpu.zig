@@ -464,6 +464,11 @@ pub const Z80 = struct {
                 self.setB(self.getD());
                 self.cycles += 4;
             },
+            0x47 => {
+                // LD B, A
+                self.setB(self.getA());
+                self.cycles += 4;
+            },
             0x49 => {
                 // LD C, C
                 self.setC(self.getC());
