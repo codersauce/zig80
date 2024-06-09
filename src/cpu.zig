@@ -18,6 +18,10 @@ pub const Z80 = struct {
     pc: u16,
     sp: u16,
 
+    iff1: bool, // Interrupt flip-flop 1
+    iff2: bool, // Interrupt flip-flop 2
+    im: u8, // Interrupt mode
+
     // Memory (for simplicity, let's assume 64KB)
     memory: [65536]u8,
 
@@ -51,6 +55,9 @@ pub const Z80 = struct {
             .hl_ = hl_,
             .pc = pc,
             .sp = sp,
+            .im = 0,
+            .iff1 = false,
+            .iff2 = false,
             .memory = memory,
             .cycles = cycles,
             .halt = false,
@@ -68,6 +75,9 @@ pub const Z80 = struct {
         self.hl_ = 0xFFFF;
         self.pc = 0xFFFF;
         self.sp = 0xFFFF;
+        self.im = 0;
+        self.iff1 = false;
+        self.iff2 = false;
         self.cycles = 0;
         self.halt = false;
         self.clearMemory();
@@ -202,6 +212,43 @@ pub const Z80 = struct {
 
         self.setF(flag.get());
         return res;
+    }
+
+    pub fn adc(self: *Z80, n: u8) void {
+        const carry: u8 = if (self.isCarry()) 1 else 0;
+        const result: u16 = @as(u16, self.getA()) + @as(u16, n) + @as(u16, carry);
+        const sum: u8 = @as(u8, @intCast(result & 0xFF));
+
+        // Symbol Field Name
+        // C Carry Flag
+        // N Add/Subtract
+        // P/V Parity/Overflow Flag
+        // H Half Carry Flag
+        // Z Zero Flag
+        // S Sign Flag
+        // X Not Used
+
+        // Condition Bits Affected
+        // S is set if result is negative; otherwise, it is reset.
+        // Z is set if result is 0; otherwise, it is reset.
+        // H is set if carry from bit 3; otherwise, it is reset.
+        // P/V is set if overflow; otherwise, it is reset.
+        // N is reset.
+        // C is set if carry from bit 7; otherwise, it is reset.
+
+        var flag = self.getFlag();
+        flag.reset();
+        flag.setFromVal(sum);
+        flag.setSign(sum & 0x80 == 0x80);
+        flag.setZero(sum == 0);
+        flag.setHalfCarry((self.getA() & 0x0F) + (n & 0x0F) + carry > 0x0F);
+        flag.setParityOverflow(sum == 0x7F);
+        flag.setSubtract(false);
+        flag.setCarry(result > 0xFF);
+        self.setF(flag.get());
+
+        self.setA(@as(u8, @intCast(result & 0xFF)));
+        self.cycles += 7;
     }
 
     pub fn doOr(self: *Z80, v: u8) void {
@@ -433,6 +480,16 @@ pub const Z80 = struct {
                 self.setL(self.inc(self.getL()));
                 self.cycles += 4;
             },
+            0x2F => {
+                // CPL
+                self.setA(~self.getA());
+                self.cycles += 4;
+            },
+            0x31 => {
+                // LD SP, nn
+                self.sp = self.fetchWord();
+                self.cycles += 10;
+            },
             0x32 => {
                 // LD (NN), A
                 self.writeByte(self.fetchWord(), self.getA());
@@ -447,6 +504,15 @@ pub const Z80 = struct {
                 // DEC (HL)
                 self.writeByte(self.hl, self.dec(self.memory[self.hl]));
                 self.cycles += 10;
+            },
+            0x37 => {
+                // SCF
+                var flag = self.getFlag();
+                flag.setCarry(true);
+                flag.setSubtract(false);
+                flag.setHalfCarry(false);
+                self.setF(flag.get());
+                self.cycles += 4;
             },
             0x38 => {
                 // JR C, n
@@ -617,6 +683,10 @@ pub const Z80 = struct {
                 self.setA(sum);
                 self.cycles += 4;
             },
+            0x8F => {
+                // ADC A, A
+                self.adc(self.getA());
+            },
             0x95 => {
                 // SUB L
                 const result = self.getA() - self.getL();
@@ -731,40 +801,7 @@ pub const Z80 = struct {
             0xCE => {
                 // ADC A, n
                 const n = self.fetchByte();
-                const carry: u8 = if (self.isCarry()) 1 else 0;
-                const result: u16 = @as(u16, self.getA()) + @as(u16, n) + @as(u16, carry);
-                const sum: u8 = @as(u8, @intCast(result & 0xFF));
-
-                // Symbol Field Name
-                // C Carry Flag
-                // N Add/Subtract
-                // P/V Parity/Overflow Flag
-                // H Half Carry Flag
-                // Z Zero Flag
-                // S Sign Flag
-                // X Not Used
-
-                // Condition Bits Affected
-                // S is set if result is negative; otherwise, it is reset.
-                // Z is set if result is 0; otherwise, it is reset.
-                // H is set if carry from bit 3; otherwise, it is reset.
-                // P/V is set if overflow; otherwise, it is reset.
-                // N is reset.
-                // C is set if carry from bit 7; otherwise, it is reset.
-
-                var flag = self.getFlag();
-                flag.reset();
-                flag.setFromVal(sum);
-                flag.setSign(sum & 0x80 == 0x80);
-                flag.setZero(sum == 0);
-                flag.setHalfCarry((self.getA() & 0x0F) + (n & 0x0F) + carry > 0x0F);
-                flag.setParityOverflow(sum == 0x7F);
-                flag.setSubtract(false);
-                flag.setCarry(result > 0xFF);
-                self.setF(flag.get());
-
-                self.setA(@as(u8, @intCast(result & 0xFF)));
-                self.cycles += 7;
+                self.adc(n);
             },
             0xD5 => {
                 // PUSH DE
@@ -912,6 +949,12 @@ pub const Z80 = struct {
 
                 self.setA(@as(u8, @intCast(result & 0xFF)));
                 self.cycles += 7;
+            },
+            0xF3 => {
+                // DI
+                self.iff1 = false;
+                self.iff2 = false;
+                self.cycles += 4;
             },
             0xF5 => {
                 // PUSH AF
