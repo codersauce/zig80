@@ -53,7 +53,11 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
 
     cpu.reset();
     try loadTest(alloc, cpu, &bench_cpu, t);
-    std.debug.print("running test: {s}\n", .{t.file_path});
+    if (t.archive_name != null) {
+        std.debug.print("running test: {s}/{s}\n", .{ t.archive_name.?, t.file_path });
+    } else {
+        std.debug.print("running test: {s}\n", .{t.file_path});
+    }
 
     while (!cpu.isHalted()) {
         try step(alloc, cpu, &bench_cpu);
@@ -136,9 +140,6 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     const cpu_state = try cpu.dumpState(alloc);
     defer alloc.free(cpu_state);
 
-    // std.debug.print("after : {s}\n", .{bench_state});
-    // std.debug.print("after : {s}\n", .{cpu_state});
-
     const addr = 0x00FE;
     const bench_mem = memory[addr];
     const cpu_mem = cpu.memory[addr];
@@ -149,6 +150,9 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     }
 
     if (!try compare(cpu, bench_cpu)) {
+        std.debug.print("op_code = {X:0>2}\n", .{cpu_opcode});
+        std.debug.print("after : {s}\n", .{bench_state});
+        std.debug.print("after : {s}\n", .{cpu_state});
         return error.Benchmar8kCpuMismatch;
     }
 

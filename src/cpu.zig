@@ -517,7 +517,7 @@ pub const Z80 = struct {
                 const result: u16 = @as(u16, self.getA()) + @as(u16, self.getB());
                 const sum = @as(u8, @intCast(result & 0xFF));
 
-                std.debug.print("A={X:0>2} B={X:0>2}\n", .{ self.getA(), self.getB() });
+                // std.debug.print("A={X:0>2} B={X:0>2}\n", .{ self.getA(), self.getB() });
                 // std.debug.print("sum={X:0>2} result={X:0>2} result8={X:0>2}\n", .{ sum, result, result8 });
 
                 // Condition Bits Affected
@@ -784,7 +784,7 @@ pub const Z80 = struct {
                 self.rst(0x38);
             },
             else => |code| {
-                std.debug.panic("Unknown opcode: {0d: >3} {0X:0>2}", .{code});
+                std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
             },
         }
     }
