@@ -158,7 +158,7 @@ pub const Z80 = struct {
         std.debug.print("flag before: ", .{});
         flag.dump();
 
-        flag.setFromAddDec(res);
+        flag.setFromDec(res);
 
         // set subtract to false
         flag.setSubtract(true);
@@ -176,7 +176,7 @@ pub const Z80 = struct {
         std.debug.print("flag before: ", .{});
         flag.dump();
 
-        flag.setFromAddDec(res);
+        flag.setFromAdd(res);
 
         // set subtract to false
         flag.setSubtract(false);
@@ -427,6 +427,11 @@ pub const Z80 = struct {
                 self.sp +%= 1;
                 self.cycles += 6;
             },
+            0x35 => {
+                // DEC (HL)
+                self.writeByte(self.hl, self.dec(self.memory[self.hl]));
+                self.cycles += 10;
+            },
             0x38 => {
                 // JR C, n
                 const offset = self.fetchByte();
@@ -484,6 +489,11 @@ pub const Z80 = struct {
                 self.setH(self.getC());
                 self.cycles += 4;
             },
+            0x62 => {
+                // LD H, D
+                self.setH(self.getD());
+                self.cycles += 4;
+            },
             0x63 => {
                 // LD H, E
                 self.setH(self.getE());
@@ -499,6 +509,11 @@ pub const Z80 = struct {
                 self.setH(self.getL());
                 self.cycles += 4;
             },
+            0x66 => {
+                // LD H, (HL)
+                self.setH(self.memory[self.hl]);
+                self.cycles += 7;
+            },
             0x6c => {
                 // LD L, H
                 self.setL(self.getH());
@@ -512,6 +527,11 @@ pub const Z80 = struct {
             0x72 => {
                 // LD (HL), D
                 self.writeByte(self.hl, self.getD());
+                self.cycles += 7;
+            },
+            0x75 => {
+                // LD (HL), L
+                self.writeByte(self.hl, self.getL());
                 self.cycles += 7;
             },
             0x76 => {
@@ -569,6 +589,41 @@ pub const Z80 = struct {
                 self.setF(flag.get());
 
                 self.setA(sum);
+                self.cycles += 4;
+            },
+            0x95 => {
+                // SUB L
+                const result = self.getA() - self.getL();
+
+                // Symbol Field Name
+                // C Carry Flag
+                // N Add/Subtract
+                // P/V Parity/Overflow Flag
+                // H Half Carry Flag
+                // Z Zero Flag
+                // S Sign Flag
+                // X Not Used
+
+                // Condition Bits Affected
+                // S is set if result is negative; otherwise, it is reset.
+                // Z is set if result is 0; otherwise, it is reset.
+                // H is set if borrow from bit 4; otherwise, it is reset.
+                // P/V is reset if overflow; otherwise, it is reset.
+                // N is set.
+                // C is set if borrow; otherwise, it is reset.
+
+                var flag = self.getFlag();
+                flag.reset();
+                flag.setFromVal(result);
+                flag.setSign(result & 0x80 == 0x80);
+                flag.setZero(result == 0);
+                flag.setHalfCarry((self.getA() & 0x0F) < (self.getL() & 0x0F));
+                flag.setParityOverflow(result == 0x7F);
+                flag.setSubtract(true);
+                flag.setCarry(result > 0xFF);
+                self.setF(flag.get());
+
+                self.setA(@as(u8, @intCast(result & 0xFF)));
                 self.cycles += 4;
             },
             0x9C => {
@@ -640,18 +695,40 @@ pub const Z80 = struct {
             0xCE => {
                 // ADC A, n
                 const n = self.fetchByte();
-                const carry = (self.getF() & 0x10) >> 4;
-                const result = self.getA() + n + carry;
-                self.setF(0);
-                if (result > 0xFF) {
-                    self.setF(self.getF() | 0x10);
-                }
-                if (result == 0) {
-                    self.setF(self.getF() | 0x80);
-                }
+                const carry: u8 = if (self.isCarry()) 1 else 0;
+                const result: u16 = @as(u16, self.getA()) + @as(u16, n) + @as(u16, carry);
+                const sum: u8 = @as(u8, @intCast(result & 0xFF));
+
+                // Symbol Field Name
+                // C Carry Flag
+                // N Add/Subtract
+                // P/V Parity/Overflow Flag
+                // H Half Carry Flag
+                // Z Zero Flag
+                // S Sign Flag
+                // X Not Used
+
+                // Condition Bits Affected
+                // S is set if result is negative; otherwise, it is reset.
+                // Z is set if result is 0; otherwise, it is reset.
+                // H is set if carry from bit 3; otherwise, it is reset.
+                // P/V is set if overflow; otherwise, it is reset.
+                // N is reset.
+                // C is set if carry from bit 7; otherwise, it is reset.
+
+                var flag = self.getFlag();
+                flag.reset();
+                flag.setFromVal(sum);
+                flag.setSign(sum & 0x80 == 0x80);
+                flag.setZero(sum == 0);
+                flag.setHalfCarry((self.getA() & 0x0F) + (n & 0x0F) + carry > 0x0F);
+                flag.setParityOverflow(sum == 0x7F);
+                flag.setSubtract(false);
+                flag.setCarry(result > 0xFF);
+                self.setF(flag.get());
+
                 self.setA(@as(u8, @intCast(result & 0xFF)));
                 self.cycles += 7;
-                self.pc +%= 2;
             },
             0xD5 => {
                 // PUSH DE
@@ -855,14 +932,26 @@ pub const Flag = struct {
         return Flag{ .value = value };
     }
 
-    pub fn setFromAddDec(self: *Flag, v: u8) void {
+    pub fn setFromAdd(self: *Flag, v: u8) void {
         self.setFromVal(v);
 
         // if lower nibble is 0, then half carry
         self.setHalfCarry(v & 0x0F == 0x0F);
 
         // set parity to true if number of bits is even
-        self.setParityOverflow(utils.countSetBits(v) % 2 == 0);
+        const bits = utils.countSetBits(v);
+        std.debug.print("value: {d} bits: {d}\n", .{ v, bits });
+        self.setParityOverflow(bits % 2 == 0);
+    }
+
+    pub fn setFromDec(self: *Flag, v: u8) void {
+        self.setFromVal(v);
+
+        // if lower nibble is 0, then half carry
+        self.setHalfCarry(v & 0x0F == 0x0F);
+
+        // set if m was 80h before operation; otherwise, it is reset
+        self.setParityOverflow(v == 0x80);
     }
 
     pub fn setFromVal(self: *Flag, v: u8) void {
