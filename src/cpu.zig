@@ -9,6 +9,10 @@ pub const Z80 = struct {
     bc: u16,
     de: u16,
     hl: u16,
+    af_: u16,
+    bc_: u16,
+    de_: u16,
+    hl_: u16,
 
     // 16-bit registers
     pc: u16,
@@ -28,6 +32,10 @@ pub const Z80 = struct {
         const bc: u16 = 0;
         const de: u16 = 0;
         const hl: u16 = 0;
+        const af_: u16 = 0;
+        const bc_: u16 = 0;
+        const de_: u16 = 0;
+        const hl_: u16 = 0;
         const pc: u16 = 0;
         const sp: u16 = 0xFFFF;
         const cycles: u64 = 0;
@@ -37,6 +45,10 @@ pub const Z80 = struct {
             .bc = bc,
             .de = de,
             .hl = hl,
+            .af_ = af_,
+            .bc_ = bc_,
+            .de_ = de_,
+            .hl_ = hl_,
             .pc = pc,
             .sp = sp,
             .memory = memory,
@@ -50,6 +62,10 @@ pub const Z80 = struct {
         self.bc = 0xFFFF;
         self.de = 0xFFFF;
         self.hl = 0xFFFF;
+        self.af_ = 0xFFFF;
+        self.bc_ = 0xFFFF;
+        self.de_ = 0xFFFF;
+        self.hl_ = 0xFFFF;
         self.pc = 0xFFFF;
         self.sp = 0xFFFF;
         self.cycles = 0;
@@ -514,6 +530,11 @@ pub const Z80 = struct {
                 self.setH(self.memory[self.hl]);
                 self.cycles += 7;
             },
+            0x67 => {
+                // LD H, A
+                self.setH(self.getA());
+                self.cycles += 4;
+            },
             0x6c => {
                 // LD L, H
                 self.setL(self.getH());
@@ -527,6 +548,11 @@ pub const Z80 = struct {
             0x72 => {
                 // LD (HL), D
                 self.writeByte(self.hl, self.getD());
+                self.cycles += 7;
+            },
+            0x73 => {
+                // LD (HL), E
+                self.writeByte(self.hl, self.getE());
                 self.cycles += 7;
             },
             0x75 => {
@@ -746,6 +772,14 @@ pub const Z80 = struct {
                 self.writeByte(self.sp, @as(u8, @intCast((self.pc + 1) & 0xFF)));
                 self.pc = 0x10;
                 self.cycles += 11;
+            },
+            0xD9 => {
+                // EXX
+                // Exchange BC, DE, HL with BC', DE', HL'
+                std.mem.swap(u16, &self.bc, &self.bc_);
+                std.mem.swap(u16, &self.de, &self.de_);
+                std.mem.swap(u16, &self.hl, &self.hl_);
+                self.cycles += 4;
             },
             0xED => {
                 // Extended instructions
