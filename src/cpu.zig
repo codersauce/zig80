@@ -329,7 +329,6 @@ pub const Z80 = struct {
             0x0A => {
                 // LD A, (BC)
                 self.setA(self.memory[self.bc]);
-                self.pc +%= 7;
                 self.cycles += 7;
             },
             0x0E => {
@@ -342,16 +341,21 @@ pub const Z80 = struct {
                 self.de = self.fetchWord();
                 self.cycles += 10;
             },
-            0x13 => {
-                // INC DE
-                self.de +%= 1;
-                self.cycles += 6;
-            },
             0x12 => {
                 // LD (DE), A
                 std.debug.print("DE={X:0>4} A={X:0>2}\n", .{ self.de, self.getA() });
                 self.writeByte(self.de, self.getA());
                 self.cycles += 7;
+            },
+            0x13 => {
+                // INC DE
+                self.de +%= 1;
+                self.cycles += 6;
+            },
+            0x1B => {
+                // DEC DE
+                self.de -%= 1;
+                self.cycles += 6;
             },
             0x1A => {
                 // LD A, (DE)
@@ -386,6 +390,22 @@ pub const Z80 = struct {
                 self.writeByte(nn, self.getL());
                 self.writeByte(nn + 1, self.getH());
                 self.cycles += 16;
+            },
+            0x26 => {
+                // LD H, n
+                self.setH(self.fetchByte());
+                self.cycles += 7;
+            },
+            0x28 => {
+                // JR Z, n
+                const offset = self.fetchByte();
+
+                if (self.isZero()) {
+                    self.pc += offset;
+                    self.cycles += 12;
+                } else {
+                    self.cycles += 7;
+                }
             },
             0x2A => {
                 // LD HL, (nn)
@@ -483,6 +503,11 @@ pub const Z80 = struct {
                 // LD L, A
                 self.setL(self.getA());
                 self.cycles += 4;
+            },
+            0x72 => {
+                // LD (HL), D
+                self.writeByte(self.hl, self.getD());
+                self.cycles += 7;
             },
             0x76 => {
                 // HALT
