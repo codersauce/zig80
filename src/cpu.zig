@@ -134,7 +134,7 @@ pub const Z80 = struct {
     }
 
     pub fn setSP(self: *Z80, v: u16) void {
-        std.debug.print("[sp] = {X:0>4}\n", .{v});
+        // std.debug.print("[sp] = {X:0>4}\n", .{v});
         self.sp = v;
     }
 
@@ -254,7 +254,7 @@ pub const Z80 = struct {
     }
 
     pub fn writeByte(self: *Z80, address: u16, value: u8) void {
-        std.debug.print("[w {X:0>4}] = {X:0>2}\n", .{ address, value });
+        // std.debug.print("[w {X:0>4}] = {X:0>2}\n", .{ address, value });
         self.memory[address] = value;
     }
 
@@ -289,7 +289,7 @@ pub const Z80 = struct {
 
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
-        std.debug.print("[cpu  ] pc={0X:0>4} opcode={1X:0>2}\n", .{ self.pc, self.peekByte() });
+        // std.debug.print("[cpu  ] pc={0X:0>4} opcode={1X:0>2}\n", .{ self.pc, self.peekByte() });
         const opcode = self.fetchByte();
 
         switch (opcode) {
