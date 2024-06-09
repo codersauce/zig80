@@ -21,7 +21,7 @@ pub fn run(alloc: Allocator) !void {
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i == 12) {
+        if (i == 13) {
             try runTest(alloc, &cpu, t);
         }
     }

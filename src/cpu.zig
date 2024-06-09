@@ -700,6 +700,16 @@ pub const Z80 = struct {
                 self.pc = self.fetchWord();
                 self.cycles += 10;
             },
+            0xC2 => {
+                // JP NZ, nn
+                const addr = self.fetchWord();
+                if (!self.isZero()) {
+                    self.pc = addr;
+                    self.cycles += 10;
+                } else {
+                    self.cycles += 10;
+                }
+            },
             0xC5 => {
                 // PUSH BC
                 self.decSP();
