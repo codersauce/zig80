@@ -115,14 +115,14 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     const cpu_state_bef = try cpu.dumpState(alloc);
     defer alloc.free(cpu_state_bef);
 
-    std.debug.print("before: {s}\n", .{bench_state_bef});
-    std.debug.print("before: {s}\n", .{cpu_state_bef});
+    // std.debug.print("before: {s}\n", .{bench_state_bef});
+    // std.debug.print("before: {s}\n", .{cpu_state_bef});
 
     const bench_opcode = memory[bench_cpu.pc.uint16_value];
     const cpu_opcode = cpu.peekByte();
 
     if (bench_opcode != cpu_opcode) {
-        std.debug.print("bench op_code: {X:0>2} cpu op_code: {X:0>2}\n", .{ bench_opcode, cpu_opcode });
+        std.debug.print("\nError: op_code mismatch - theirs: {X:0>2} ours: {X:0>2}\n", .{ bench_opcode, cpu_opcode });
         return error.BenchmarkCpuMismatch;
     }
 
@@ -136,14 +136,23 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     const cpu_state = try cpu.dumpState(alloc);
     defer alloc.free(cpu_state);
 
-    std.debug.print("after : {s}\n", .{bench_state});
-    std.debug.print("after : {s}\n", .{cpu_state});
+    // std.debug.print("after : {s}\n", .{bench_state});
+    // std.debug.print("after : {s}\n", .{cpu_state});
+
+    const addr = 0x00FE;
+    const bench_mem = memory[addr];
+    const cpu_mem = cpu.memory[addr];
+
+    if (bench_mem != cpu_mem) {
+        std.debug.print("\nError: {X:0>4} mismatch - theirs: {X:0>2} ours: {X:0>2}\n", .{ addr, bench_mem, cpu_mem });
+        return error.BenchmarkCpuMismatch;
+    }
 
     if (!try compare(cpu, bench_cpu)) {
         return error.Benchmar8kCpuMismatch;
     }
 
-    std.debug.print("\n", .{});
+    // std.debug.print("\n", .{});
 }
 
 fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
