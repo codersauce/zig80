@@ -101,3 +101,16 @@ pub fn extractZip(alloc: Allocator, archive_path: []const u8, outdir_path: []con
     defer alloc.free(proc.stderr);
     // std.debug.print(" *** Output:\n{s}\n", .{proc.stdout});
 }
+
+pub fn countSetBits(v: u8) u32 {
+    var count: u32 = 0;
+    var n = v;
+
+    while (n > 0) {
+        count += 1;
+        n &= n - 1;
+    }
+
+    // std.debug.print("countSetBits for {0d} = {0b} = {1d}\n", .{ v, count });
+    return count;
+}

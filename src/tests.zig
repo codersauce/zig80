@@ -55,7 +55,7 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
     try loadTest(alloc, cpu, &bench_cpu, t);
     std.debug.print("running test: {s}\n", .{t.file_path});
 
-    for (0..200) |_| {
+    while (!cpu.isHalted()) {
         try step(alloc, cpu, &bench_cpu);
     }
 }
@@ -105,26 +105,8 @@ fn dumpCpuState(alloc: Allocator, cpu: *c.Z80) ![]const u8 {
     const hv = cpu.hl.uint16_value >> 8;
     const lv = cpu.hl.uint16_value & 0xFF;
 
-    return try std.fmt.allocPrint(alloc, "[bnc] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} pc={X:0>4} sp={X:0>4}", .{ av, fv, bv, cv, dv, ev, hv, lv, cpu.pc.uint16_value, cpu.sp.uint16_value });
+    return try std.fmt.allocPrint(alloc, "[bnc] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} sp={X:0>4} pc={X:0>4}", .{ av, fv, bv, cv, dv, ev, hv, lv, cpu.sp.uint16_value, cpu.pc.uint16_value });
 }
-
-// std.debug.print("pc: {0X:0>4}\n", .{cpu.pc.uint16_value});
-// std.debug.print("sp: {0X:0>4}\n", .{cpu.sp.uint16_value});
-// std.debug.print("af: {0X:0>4}\n", .{cpu.af.uint16_value});
-// std.debug.print("bc: {0X:0>4}\n", .{cpu.bc.uint16_value});
-// std.debug.print("de: {0X:0>4}\n", .{cpu.de.uint16_value});
-// std.debug.print("hl: {0X:0>4}\n", .{cpu.hl.uint16_value});
-// std.debug.print("ix: {0X:0>4}\n", .{cpu.ix.uint16_value});
-// std.debug.print("iy: {0X:0>4}\n", .{cpu.iy.uint16_value});
-// std.debug.print("af': {0X:0>4}\n", .{cpu.af_.uint16_value});
-// std.debug.print("bc': {0X:0>4}\n", .{cpu.bc_.uint16_value});
-// std.debug.print("de': {0X:0>4}\n", .{cpu.de_.uint16_value});
-// std.debug.print("hl': {0X:0>4}\n", .{cpu.hl_.uint16_value});
-// std.debug.print("i: {0X:0>2}\n", .{cpu.i});
-// std.debug.print("r: {0X:0>2}\n", .{cpu.r});
-// std.debug.print("iff1: {0X:0>2}\n", .{cpu.iff1});
-// std.debug.print("iff2: {0X:0>2}\n", .{cpu.iff2});
-// std.debug.print("im: {0X:0>2}\n", .{cpu.im});
 
 fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     const bench_state_bef = try dumpCpuState(alloc, bench_cpu);
@@ -135,6 +117,14 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
 
     std.debug.print("before: {s}\n", .{bench_state_bef});
     std.debug.print("before: {s}\n", .{cpu_state_bef});
+
+    const bench_opcode = memory[bench_cpu.pc.uint16_value];
+    const cpu_opcode = cpu.peekByte();
+
+    if (bench_opcode != cpu_opcode) {
+        std.debug.print("bench op_code: {X:0>2} cpu op_code: {X:0>2}\n", .{ bench_opcode, cpu_opcode });
+        return error.BenchmarkCpuMismatch;
+    }
 
     // steps the benchmark cpu
     _ = c.z80_run(bench_cpu, 1);
@@ -239,14 +229,17 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
     defer alloc.free(contents);
 
     cpu.load(contents, t.start_address);
+    cpu.memory[t.exit_address] = 0x76; // HALT
     cpu.pc = t.start_address;
 
     // load program into benchmark cpu memory
     @memset(&memory, 0);
     @memcpy(memory[t.start_address .. t.start_address + contents.len], contents);
 
-    c.z80_power(bench_cpu, true);
+    // set exit address
+    memory[t.exit_address] = 0x76; // HALT
 
+    c.z80_power(bench_cpu, true);
     bench_cpu.pc.uint16_value = t.start_address;
 }
 
