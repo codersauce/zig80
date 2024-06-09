@@ -18,6 +18,15 @@ pub const Z80 = struct {
     pc: u16,
     sp: u16,
 
+    // Index registers
+    ix: u16,
+    iy: u16,
+
+    // Other regisers
+    i: u8, // Interrupt vector
+    r: u8, // Memory refresh
+
+    // Interrupt flip-flops
     iff1: bool, // Interrupt flip-flop 1
     iff2: bool, // Interrupt flip-flop 2
     im: u8, // Interrupt mode
@@ -55,6 +64,10 @@ pub const Z80 = struct {
             .hl_ = hl_,
             .pc = pc,
             .sp = sp,
+            .ix = 0,
+            .iy = 0,
+            .i = 0,
+            .r = 0,
             .im = 0,
             .iff1 = false,
             .iff2 = false,
@@ -75,6 +88,10 @@ pub const Z80 = struct {
         self.hl_ = 0xFFFF;
         self.pc = 0xFFFF;
         self.sp = 0xFFFF;
+        self.ix = 0xFFFF;
+        self.iy = 0xFFFF;
+        self.i = 0;
+        self.r = 0;
         self.im = 0;
         self.iff1 = false;
         self.iff2 = false;
@@ -475,6 +492,11 @@ pub const Z80 = struct {
                 self.hl = self.memory[self.fetchWord()];
                 self.cycles += 16;
             },
+            0x2B => {
+                // DEC HL
+                self.hl -%= 1;
+                self.cycles += 6;
+            },
             0x2C => {
                 // INC L
                 self.setL(self.inc(self.getL()));
@@ -611,6 +633,12 @@ pub const Z80 = struct {
                 self.setL(self.getA());
                 self.cycles += 4;
             },
+            0x71 => {
+                // LD (IY+d), C
+                self.writeByte(self.iy +% @as(u16, @intCast(self.fetchByte())), self.getC());
+                self.pc +%= 1;
+                self.cycles += 19;
+            },
             0x72 => {
                 // LD (HL), D
                 self.writeByte(self.hl, self.getD());
@@ -660,6 +688,7 @@ pub const Z80 = struct {
                 const sum = @as(u8, @intCast(result & 0xFF));
 
                 // std.debug.print("A={X:0>2} B={X:0>2}\n", .{ self.getA(), self.getB() });
+                // std.debug.print("pc = {X:0>4}\n", .{self.pc});
                 // std.debug.print("sum={X:0>2} result={X:0>2} result8={X:0>2}\n", .{ sum, result, result8 });
 
                 // Condition Bits Affected
@@ -713,6 +742,7 @@ pub const Z80 = struct {
                 flag.setFromVal(result);
                 flag.setSign(result & 0x80 == 0x80);
                 flag.setZero(result == 0);
+                // std.debug.print("pc = {X:0>4}\n", .{self.pc});
                 flag.setHalfCarry((self.getA() & 0x0F) < (self.getL() & 0x0F));
                 flag.setParityOverflow(result == 0x7F);
                 flag.setSubtract(true);
@@ -972,6 +1002,77 @@ pub const Z80 = struct {
             0xFB => {
                 // EI
                 self.cycles += 4;
+            },
+            0xFD => {
+                // IY
+                const iy_opcode = self.fetchByte();
+                switch (iy_opcode) {
+                    0x21 => {
+                        // LD IY, nn
+                        self.iy = self.fetchWord();
+                        self.cycles += 14;
+                    },
+                    0x22 => {
+                        // LD (nn), IY
+                        const nn = self.fetchWord();
+                        self.writeByte(nn, @as(u8, @intCast(self.iy >> 8)));
+                        self.writeByte(nn + 1, @as(u8, @intCast(self.iy & 0xFF)));
+                        self.cycles += 20;
+                    },
+                    0x2A => {
+                        // LD IY, (nn)
+                        self.iy = self.memory[self.fetchWord()];
+                        self.cycles += 20;
+                    },
+                    0x2C => {
+                        // INC IY
+                        self.iy +%= 1;
+                        self.cycles += 10;
+                    },
+                    0x34 => {
+                        // INC (IY+d)
+                        const d = self.fetchByte();
+                        self.writeByte(self.iy + d, self.inc(self.memory[self.iy + d]));
+                        self.cycles += 23;
+                    },
+                    0x35 => {
+                        // DEC (IY+d)
+                        const d = self.fetchByte();
+                        self.writeByte(self.iy + d, self.dec(self.memory[self.iy + d]));
+                        self.cycles += 23;
+                    },
+                    0x36 => {
+                        // LD (IY+d), n
+                        const d = self.fetchByte();
+                        self.writeByte(self.iy + d, self.fetchByte());
+                        self.cycles += 19;
+                    },
+                    0x39 => {
+                        // ADD IY, SP
+                        const result = self.iy + self.sp;
+                        self.iy = @as(u16, @intCast(result & 0xFFFF));
+                        self.cycles += 15;
+                    },
+                    0x46 => {
+                        // LD B, (IY+d)
+                        const d = self.fetchByte();
+                        self.setB(self.memory[self.iy + d]);
+                        self.cycles += 19;
+                    },
+                    0xE5 => {
+                        // std.debug.print("pc = {X:0>4}\n", .{self.pc});
+                        // PUSH IY
+                        self.decSP();
+                        self.writeByte(self.sp, @as(u8, @intCast(self.iy >> 8)));
+                        self.decSP();
+                        self.writeByte(self.sp, @as(u8, @intCast(self.iy & 0xFF)));
+                        self.cycles += 15;
+                        // std.debug.print("pc = {X:0>4}\n", .{self.pc});
+                    },
+                    else => |code| {
+                        std.debug.panic("Unknown IY opcode: {0X:0>2}\n", .{code});
+                    },
+                }
             },
             0xFF => {
                 // RST 38H

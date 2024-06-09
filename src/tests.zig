@@ -21,7 +21,7 @@ pub fn run(alloc: Allocator) !void {
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i == 14) {
+        if (i >= 11) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -131,7 +131,14 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     }
 
     // steps the benchmark cpu
-    _ = c.z80_run(bench_cpu, 1);
+    // std.debug.print("before - bench pc = {X:0>4} cur_byte = {X:0>2}\n", .{ bench_cpu.pc.uint16_value, memory[bench_cpu.pc.uint16_value] });
+    // FIXME: if we make this less than 5 then the bench CPU will not advance PC or SP.
+    const run_cycles: u32 = if (bench_opcode == 0xFD) 5 else 1;
+    const cycles = c.z80_run(bench_cpu, run_cycles);
+    // const cycles = c.z80_run(bench_cpu, 1);
+    // std.debug.print("cycles: {d}\n", .{cycles});
+    // std.debug.print("after  - bench pc = {X:0>4} cur_byte = {X:0>2}\n", .{ bench_cpu.pc.uint16_value, memory[bench_cpu.pc.uint16_value] });
+    _ = cycles;
     const bench_state = try dumpCpuState(alloc, bench_cpu);
     defer alloc.free(bench_state);
 
@@ -150,7 +157,14 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     }
 
     if (!try compare(cpu, bench_cpu)) {
-        std.debug.print("op_code = {X:0>2}\n", .{cpu_opcode});
+        std.debug.print("op_code = {X:0>2} last_bytes =", .{cpu_opcode});
+        utils.dumpMemoryWithPointer(&cpu.memory, cpu.pc, 20);
+        std.debug.print("\n", .{});
+
+        std.debug.print("op_code = {X:0>2} last_bytes =", .{bench_opcode});
+        utils.dumpMemoryWithPointer(&memory, bench_cpu.pc.uint16_value, 20);
+        std.debug.print("\n", .{});
+
         std.debug.print("after : {s}\n", .{bench_state});
         std.debug.print("after : {s}\n", .{cpu_state});
         return error.Benchmar8kCpuMismatch;
@@ -170,6 +184,8 @@ fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
     const ev = bench_cpu.de.uint16_value & 0xFF;
     const hv = bench_cpu.hl.uint16_value >> 8;
     const lv = bench_cpu.hl.uint16_value & 0xFF;
+    const ix = bench_cpu.ix_iy[0].uint16_value;
+    const iy = bench_cpu.ix_iy[1].uint16_value;
 
     if (cpu.getA() != av) {
         std.debug.print("a expected: {X:0>2} actual: {X:0>2}\n", .{ av, cpu.getA() });
@@ -227,6 +243,16 @@ fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
 
     if (cpu.sp != bench_cpu.sp.uint16_value) {
         std.debug.print("sp expected: {X:0>4} actual: {X:0>4}\n", .{ bench_cpu.sp.uint16_value, cpu.sp });
+        errors += 1;
+    }
+
+    if (cpu.ix != ix) {
+        std.debug.print("ix expected: {X:0>4} actual: {X:0>4}\n", .{ ix, cpu.ix });
+        errors += 1;
+    }
+
+    if (cpu.iy != iy) {
+        std.debug.print("iy expected: {X:0>4} actual: {X:0>4}\n", .{ iy, cpu.iy });
         errors += 1;
     }
 

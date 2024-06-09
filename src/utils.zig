@@ -114,3 +114,18 @@ pub fn countSetBits(v: u8) u32 {
     // std.debug.print("countSetBits for {0d} = {0b} = {1d}\n", .{ v, count });
     return count;
 }
+
+pub fn dumpMemoryWithPointer(memory: []const u8, pc: u16, range: u8) void {
+    for (0..range) |i| {
+        const j: i16 = @intCast(i);
+        const rr: i32 = j - (range / 2);
+        const ix: usize = @intCast(pc + rr);
+        if (ix >= 0) {
+            if (ix == pc) {
+                std.debug.print(" [{X:0>2}]", .{memory[ix]});
+            } else {
+                std.debug.print(" {X:0>2}", .{memory[ix]});
+            }
+        }
+    }
+}
