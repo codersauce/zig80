@@ -202,7 +202,7 @@ pub const Z80 = struct {
     pub fn dec(self: *Z80, v: u8) u8 {
         const res = v -% 1;
         var flag = self.getFlag();
-        flag.setFromDec(v, res);
+        flag.setFromIncDec(v, res);
         // set subtract to true
         flag.setSubtract(true);
 
@@ -213,7 +213,7 @@ pub const Z80 = struct {
     pub fn inc(self: *Z80, v: u8) u8 {
         const res = v +% 1;
         var flag = self.getFlag();
-        flag.setFromU8(res);
+        flag.setFromIncDec(v, res);
         flag.setSubtract(false);
         self.setF(flag.get());
         return res;
@@ -1283,7 +1283,7 @@ pub const Flag = struct {
         self.setParityOverflow(bits % 2 == 0);
     }
 
-    pub fn setFromDec(self: *Flag, old: u8, new: u8) void {
+    pub fn setFromIncDec(self: *Flag, old: u8, new: u8) void {
         self.setFromU8(new);
 
         // if lower nibble is 0, then half carry
