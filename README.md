@@ -6,13 +6,11 @@ Z80 emulator written in Zig.
 
 ### In Progress
 
-- [ ] Port test suite execution from [redcode/Z80](https://github.com/redcode/Z80) and [redcode/SingleStepTests-z80](https://github.com/redcode/SingleStepTests-z80)
-
-- [ ] Run our integration tests validating against [redcode/Z80](https://github.com/redcode/Z80)
-
-- [ ] Implement basic CPU opcodes
+- [ ] Get full coverage from all test suites
 
 ### Completed
 
+- [x] Run our integration tests validating against [redcode/Z80](https://github.com/redcode/Z80)
+- [x] Port test suite execution from [redcode/Z80](https://github.com/redcode/Z80) and [redcode/SingleStepTests-z80](https://github.com/redcode/SingleStepTests-z80)
 - [x] Set up initial project structure
 - [x] Write initial README.md
