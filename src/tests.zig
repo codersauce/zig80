@@ -133,7 +133,11 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     // steps the benchmark cpu
     // std.debug.print("before - bench pc = {X:0>4} cur_byte = {X:0>2}\n", .{ bench_cpu.pc.uint16_value, memory[bench_cpu.pc.uint16_value] });
     // FIXME: if we make this less than 5 then the bench CPU will not advance PC or SP.
-    const run_cycles: u32 = if (bench_opcode == 0xFD) 5 else 1;
+    const run_cycles: u32 = switch (bench_opcode) {
+        0xFD => 5,
+        // 0x71 => 19,
+        else => 1,
+    };
     const cycles = c.z80_run(bench_cpu, run_cycles);
     // const cycles = c.z80_run(bench_cpu, 1);
     // std.debug.print("cycles: {d}\n", .{cycles});
@@ -157,12 +161,16 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     }
 
     if (!try compare(cpu, bench_cpu)) {
-        std.debug.print("op_code = {X:0>2} last_bytes =", .{cpu_opcode});
+        std.debug.print("[ours]   op_code = {X:0>2} last_bytes =", .{cpu_opcode});
         utils.dumpMemoryWithPointer(&cpu.memory, cpu.pc, 20);
         std.debug.print("\n", .{});
 
-        std.debug.print("op_code = {X:0>2} last_bytes =", .{bench_opcode});
+        std.debug.print("[theirs] op_code = {X:0>2} last_bytes =", .{bench_opcode});
         utils.dumpMemoryWithPointer(&memory, bench_cpu.pc.uint16_value, 20);
+        std.debug.print("\n", .{});
+
+        std.debug.print("before: {s}\n", .{bench_state_bef});
+        std.debug.print("before: {s}\n", .{cpu_state_bef});
         std.debug.print("\n", .{});
 
         std.debug.print("after : {s}\n", .{bench_state});
