@@ -364,6 +364,14 @@ pub const Z80 = struct {
         return byte;
     }
 
+    pub fn fetchOpcode(self: *Z80) u8 {
+        self.r += 1;
+        if (self.r >= 128) {
+            self.r = 0;
+        }
+        return self.fetchByte();
+    }
+
     pub fn peekByte(self: *Z80) u8 {
         return self.memory[self.pc];
     }
@@ -412,7 +420,7 @@ pub const Z80 = struct {
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
         // std.debug.print("[cpu  ] pc={0X:0>4} opcode={1X:0>2}\n", .{ self.pc, self.peekByte() });
-        const opcode = self.fetchByte();
+        const opcode = self.fetchOpcode();
 
         switch (opcode) {
             0x00 => {

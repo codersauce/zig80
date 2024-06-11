@@ -192,8 +192,44 @@ fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
     const ev = bench_cpu.de.uint16_value & 0xFF;
     const hv = bench_cpu.hl.uint16_value >> 8;
     const lv = bench_cpu.hl.uint16_value & 0xFF;
+    const af_ = bench_cpu.af_.uint16_value;
+    const bc_ = bench_cpu.bc_.uint16_value;
+    const de_ = bench_cpu.de_.uint16_value;
+    const hl_ = bench_cpu.hl_.uint16_value;
     const ix = bench_cpu.ix_iy[0].uint16_value;
     const iy = bench_cpu.ix_iy[1].uint16_value;
+    const r = bench_cpu.r;
+    const i = bench_cpu.i;
+
+    if (cpu.af_ != af_) {
+        std.debug.print("af_ expected: {X:0>4} actual: {X:0>4}\n", .{ af_, cpu.af_ });
+        errors += 1;
+    }
+
+    if (cpu.bc_ != bc_) {
+        std.debug.print("bc_ expected: {X:0>4} actual: {X:0>4}\n", .{ bc_, cpu.bc_ });
+        errors += 1;
+    }
+
+    if (cpu.de_ != de_) {
+        std.debug.print("de_ expected: {X:0>4} actual: {X:0>4}\n", .{ de_, cpu.de_ });
+        errors += 1;
+    }
+
+    if (cpu.hl_ != hl_) {
+        std.debug.print("hl_ expected: {X:0>4} actual: {X:0>4}\n", .{ hl_, cpu.hl_ });
+        errors += 1;
+    }
+
+    if (cpu.r != r) {
+        std.debug.print("r expected: {X:0>2} actual: {X:0>2}\n", .{ r, cpu.r });
+        errors += 1;
+    }
+
+    if (cpu.i != i) {
+        std.debug.print("i expected: {X:0>2} actual: {X:0>2}\n", .{ i, cpu.i });
+        errors += 1;
+    }
 
     if (cpu.getA() != av) {
         std.debug.print("a expected: {X:0>2} actual: {X:0>2}\n", .{ av, cpu.getA() });
