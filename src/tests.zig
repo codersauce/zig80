@@ -170,9 +170,14 @@ fn cpmCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
     return 0xC9;
 }
 
+fn spectrumWrite(self: *Z80, address: u16, value: u8) void {
+    if (address > 0x3FFF) {
+        self.memory[address] = value;
+    }
+}
+
 fn spectrumCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
     _ = context;
-    // std.debug.print("write: {x} {x}\n", .{ address, value });
     if (address > 0x3FFF) {
         memory[address] = value;
     }
@@ -507,6 +512,8 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
         memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)
         memory[0x0D6B] = 0xC9; // ret
         memory[0x1601] = 0xC9; // ret
+
+        cpu.write = spectrumWrite;
         cpu.im = 1;
         cpu.i = 0x3F;
         cpu.memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)

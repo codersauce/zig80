@@ -44,6 +44,12 @@ pub const Z80 = struct {
     // Pending opcode
     pending_opcode: ?u8,
 
+    // Write handler
+    write: ?*const fn (*Z80, address: u16, value: u8) void,
+
+    // Hook handler
+    hook: ?*const fn (*Z80, address: u16) void,
+
     // Initialize the CPU state
     pub fn init() Z80 {
         const memory: [65536]u8 = [_]u8{0} ** 65536;
@@ -82,6 +88,8 @@ pub const Z80 = struct {
             .halt = false,
             .trap = null,
             .pending_opcode = null,
+            .write = null,
+            .hook = null,
         };
     }
 
