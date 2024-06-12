@@ -119,13 +119,31 @@ pub fn dumpMemoryWithPointer(memory: []const u8, pc: u16, range: u8) void {
     for (0..range) |i| {
         const j: i16 = @intCast(i);
         const rr: i32 = j - (range / 2);
-        const ix: usize = @intCast(pc + rr);
-        if (ix >= 0) {
-            if (ix == pc) {
-                std.debug.print(" [{X:0>2}]", .{memory[ix]});
-            } else {
-                std.debug.print(" {X:0>2}", .{memory[ix]});
+        if (pc + rr >= 0) {
+            const ix: usize = @intCast(pc + rr);
+            if (ix >= 0) {
+                if (ix == pc) {
+                    std.debug.print(" [{X:0>2}]", .{memory[ix]});
+                } else {
+                    std.debug.print(" {X:0>2}", .{memory[ix]});
+                }
             }
+        }
+    }
+}
+
+pub fn showMismatch(alloc: Allocator, m1: []const u8, m2: []const u8) void {
+    _ = alloc;
+    for (m1, 0..) |a, i| {
+        if (m2[i] != a) {
+            std.debug.print("Mismatch at {X:0>4}: ours = {X:0>2} theirs = {X:0>2}\n", .{ i, a, m2[i] });
+            std.debug.print("  ours   = ", .{});
+            dumpMemoryWithPointer(m1, @intCast(i), 16);
+            std.debug.print("\n  theirs = ", .{});
+            dumpMemoryWithPointer(m2, @intCast(i), 16);
+            std.debug.print("\n", .{});
+            // } else {
+            //     std.debug.print("{X:0>2} {X:0>2}\n", .{ a, m2[i] });
         }
     }
 }

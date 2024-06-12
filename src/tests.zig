@@ -15,13 +15,15 @@ const TestError = error{
 };
 
 var memory: [0x10000]u8 = undefined; // 64KB
+var a: u8 = 0xFF;
+var zx_spectrum_print_hook_address: u16 = 0;
 
 pub fn run(alloc: Allocator) !void {
     try downloadAndExtract(alloc);
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i >= 1) {
+        if (i >= 0) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -48,8 +50,6 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test) !void {
     bench_cpu.read = cpuRead;
     bench_cpu.fetch_opcode = cpuRead;
     bench_cpu.halt = cpuHalt;
-    bench_cpu.write = cpmCpuWrite;
-    bench_cpu.hook = cpmCpuHook;
 
     cpu.reset();
     try loadTest(alloc, cpu, &bench_cpu, t);
@@ -94,9 +94,154 @@ fn cpmCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) 
 }
 
 fn cpmCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+    if (address == zx_spectrum_print_hook_address) {
+        std.debug.print("hook: {x}\n", .{address});
+    }
+
+    const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
+    const cv: u8 = @intCast(cpu.bc.uint16_value >> 8);
+
+    if (cv == 2) {
+        const char: u8 = @intCast(cpu.de.uint16_value & 0xFF);
+        std.debug.print("{c}", .{char});
+    } else if (cv == 9) {
+        var i = cpu.de.uint16_value;
+        var ci: u8 = 255;
+
+        while (ci > 0) {
+            ci -= 1;
+            const char: u8 = memory[i];
+            i += 1;
+            if (char == 0x24) {
+                return 0xC9;
+            } else if (char == 0x0A) {
+                std.debug.print("\n", .{});
+            } else if (char == 0x0D) {
+                continue;
+            } else {
+                std.debug.print("{c}", .{char});
+            }
+        }
+    }
+
+    // if (Z80_C(cpu) == 2) {
+    //   hash = Z_FNV1_32_UPDATE(hash, (character = Z80_E(cpu)));
+    //
+    //   switch (character) {
+    //   case 0x0A: /* LF */
+    //     cr();
+    //   case 0x0D: /* CR */
+    //     break;
+    //
+    //   default:
+    //     if (show_test_output)
+    //       putchar(character);
+    //     cursor_x++;
+    //   }
+    // }
+    //
+    // /* BDOS function 9 (C_WRITESTR) - Output string */
+    // else if (Z80_C(cpu) == 9) {
+    //   zuint16 i = Z80_DE(cpu);
+    //   zuint c = 255;
+    //
+    //   while (c--) {
+    //     hash = Z_FNV1_32_UPDATE(hash, (character = memory[i++]));
+    //
+    //     switch (character) {
+    //     case 0x24: /* $  */
+    //       return OPCODE_RET;
+    //     case 0x0A: /* LF */
+    //       cr();
+    //     case 0x0D: /* CR */
+    //       break;
+    //
+    //     default:
+    //       if (show_test_output)
+    //         putchar(character);
+    //       cursor_x++;
+    //     }
+    //   }
+    //
+    //   if (show_test_output)
+    //     puts(" [TRUNCATED]");
+    // }
+
+    return 0xC9;
+}
+
+fn spectrumCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
     _ = context;
-    std.debug.print("hook: {x}\n", .{address});
-    return 0;
+    // std.debug.print("write: {x} {x}\n", .{ address, value });
+    if (address > 0x3FFF) {
+        memory[address] = value;
+    }
+}
+
+fn spectrumCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+    if (context == null) {
+        return 0x00;
+    }
+    const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
+    const av: u8 = @intCast(cpu.af.uint16_value >> 8);
+    if (address != zx_spectrum_print_hook_address) {
+        return 0x00;
+    }
+    // std.debug.print("** {X:0>4}  {X:0>2} ** ", .{ address, av });
+
+    switch (av) {
+        0x0D => {
+            // CR
+            std.debug.print("\n", .{});
+        },
+        0x17 => {
+            // TAB
+            // zx_spectrum_tab = 2;
+        },
+        0x7F => {
+            // ©
+            std.debug.print("©", .{});
+            // cursor_x++;
+        },
+        else => if (av >= 32 and av < 127) {
+            std.debug.print("{c}", .{av});
+            // cursor_x++;
+        } else {
+            // zx_spectrum_bad_character = true;
+        },
+    }
+
+    return 0x00;
+}
+
+fn cpuHook(cpu: *Z80, address: u16) u8 {
+    if (address != zx_spectrum_print_hook_address) {
+        return 0x00;
+    }
+
+    switch (cpu.getA()) {
+        0x0D => {
+            // CR
+            std.debug.print("\n", .{});
+        },
+        0x17 => {
+            // TAB
+            // zx_spectrum_tab = 2;
+        },
+        0x7F => {
+            // ©
+            std.debug.print("©", .{});
+            // cursor_x++;
+        },
+        else => if (cpu.getA() >= 32 and cpu.getA() < 127) {
+            std.debug.print("{c}", .{cpu.getA()});
+            // cursor_x++;
+        } else {
+            // zx_spectrum_bad_character = true;
+        },
+    }
+
+    return 0xC9; // RET
 }
 
 fn dumpCpuState(alloc: Allocator, cpu: *c.Z80) ![]const u8 {
@@ -134,10 +279,12 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     // std.debug.print("before - bench pc = {X:0>4} cur_byte = {X:0>2}\n", .{ bench_cpu.pc.uint16_value, memory[bench_cpu.pc.uint16_value] });
     // FIXME: if we make this less than 5 then the bench CPU will not advance PC or SP.
     const run_cycles: u32 = switch (bench_opcode) {
+        0xDD => 5,
         0xFD => 5,
         // 0x71 => 19,
         else => 1,
     };
+    bench_cpu.context = bench_cpu;
     const cycles = c.z80_run(bench_cpu, run_cycles);
     // const cycles = c.z80_run(bench_cpu, 1);
     // std.debug.print("cycles: {d}\n", .{cycles});
@@ -151,16 +298,16 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     const cpu_state = try cpu.dumpState(alloc);
     defer alloc.free(cpu_state);
 
-    const addr = 0x00FE;
-    const bench_mem = memory[addr];
-    const cpu_mem = cpu.memory[addr];
+    // const addr = 0x00FE;
+    // const bench_mem = memory[addr];
+    // const cpu_mem = cpu.memory[addr];
+    //
+    // if (bench_mem != cpu_mem) {
+    //     std.debug.print("\nError: {X:0>4} mismatch - theirs: {X:0>2} ours: {X:0>2}\n", .{ addr, bench_mem, cpu_mem });
+    //     return error.BenchmarkCpuMismatch;
+    // }
 
-    if (bench_mem != cpu_mem) {
-        std.debug.print("\nError: {X:0>4} mismatch - theirs: {X:0>2} ours: {X:0>2}\n", .{ addr, bench_mem, cpu_mem });
-        return error.BenchmarkCpuMismatch;
-    }
-
-    if (!try compare(cpu, bench_cpu)) {
+    if (!try compare(alloc, cpu, bench_cpu)) {
         std.debug.print("[ours]   op_code = {X:0>2} last_bytes =", .{cpu_opcode});
         utils.dumpMemoryWithPointer(&cpu.memory, cpu.pc, 20);
         std.debug.print("\n", .{});
@@ -181,7 +328,7 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !void {
     // std.debug.print("\n", .{});
 }
 
-fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
+fn compare(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80) !bool {
     var errors: u8 = 0;
 
     const av = bench_cpu.af.uint16_value >> 8;
@@ -300,6 +447,12 @@ fn compare(cpu: *Z80, bench_cpu: *c.Z80) !bool {
         errors += 1;
     }
 
+    if (!std.mem.eql(u8, &cpu.memory, &memory)) {
+        std.debug.print("memory mismatch\n", .{});
+        utils.showMismatch(alloc, &cpu.memory, &memory);
+        errors += 1;
+    }
+
     if (errors > 0) {
         return false;
     }
@@ -324,6 +477,53 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
 
     c.z80_power(bench_cpu, true);
     bench_cpu.pc.uint16_value = t.start_address;
+
+    if (t.format == 0) {
+        std.debug.print("CP/M Format\n", .{});
+        // CP/M Format
+        // cpu.fetch_opcode = cpu_read;
+        // cpu.write = cpm_cpu_write;
+        // cpu.hook = cpm_cpu_hook;
+        // memory[0] = OPCODE_HALT;
+        // memory[5] = Z80_HOOK; /* PRINT */
+        bench_cpu.write = cpmCpuWrite;
+        bench_cpu.hook = cpmCpuHook;
+        memory[0] = 0x76; // halt
+        memory[5] = 0x64; // print
+        cpu.memory[0] = 0x76; // HALT
+        cpu.memory[5] = 0x64; // print
+    } else {
+        std.debug.print("ZX Spectrum Format\n", .{});
+        // ZX Spectrum Format
+        // cpu.write = zx_spectrum_cpu_write;
+        // cpu.hook = zx_spectrum_cpu_hook;
+        // cpu.im = 1;
+        // cpu.i = 0x3F;
+        zx_spectrum_print_hook_address = 0x0010;
+        bench_cpu.write = spectrumCpuWrite;
+        bench_cpu.hook = spectrumCpuHook;
+        bench_cpu.im = 1;
+        bench_cpu.i = 0x3F;
+        memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)
+        memory[0x0D6B] = 0xC9; // ret
+        memory[0x1601] = 0xC9; // ret
+        cpu.im = 1;
+        cpu.i = 0x3F;
+        cpu.memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)
+        cpu.memory[0x0D6B] = 0xC9; // ret
+        cpu.memory[0x1601] = 0xC9; // ret
+        cpu.trap = &cpuHook;
+        // cpu.fetch_opcode = cpu_read;
+        //
+        // /* 0010: THE 'PRINT A CHARACTER' RESTART */
+        // memory[zx_spectrum_print_hook_address = 0x0010] = Z80_HOOK;
+        //
+        // /* 0D6B: THE 'CLS' COMMAND ROUTINE */
+        // memory[0x0D6B] = OPCODE_RET;
+        //
+        // /* 1601: THE 'CHAN_OPEN' SUBROUTINE */
+        // memory[0x1601] = OPCODE_RET;
+    }
 }
 
 fn loadTestFile(alloc: Allocator, t: Test) ![]const u8 {
