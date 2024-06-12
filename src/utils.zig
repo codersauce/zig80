@@ -121,7 +121,7 @@ pub fn dumpMemoryWithPointer(memory: []const u8, pc: u16, range: u8) void {
         const rr: i32 = j - (range / 2);
         if (pc + rr >= 0) {
             const ix: usize = @intCast(pc + rr);
-            if (ix >= 0) {
+            if (ix >= 0 and ix < memory.len) {
                 if (ix == pc) {
                     std.debug.print(" [{X:0>2}]", .{memory[ix]});
                 } else {

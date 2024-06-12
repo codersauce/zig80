@@ -258,7 +258,9 @@ pub const Z80 = struct {
         flag.setSign(sum & 0x80 == 0x80);
         flag.setZero(sum == 0);
         flag.setHalfCarry((v1 & 0x0F) + (v2 & 0x0F) > 0x0F);
-        flag.setParityOverflow(sum == 0x7F);
+        const po = ((((v1 ^ result) & (v2 ^ result)) & 0x80) != 0);
+        flag.setParityOverflow(po);
+        // flag.setParityOverflow(sum == 0x7F);
         flag.setSubtract(false);
         flag.setCarry(result > 0xFF);
         self.setF(flag.get());
@@ -319,7 +321,9 @@ pub const Z80 = struct {
         flag.setSign(sum & 0x80 == 0x80);
         flag.setZero(sum == 0);
         flag.setHalfCarry((self.getA() & 0x0F) + (n & 0x0F) + carry > 0x0F);
-        flag.setParityOverflow(sum == 0x7F);
+        const a = self.getA();
+        const po = ((((a ^ result) & (n ^ result)) & 0x80) != 0);
+        flag.setParityOverflow(po);
         flag.setSubtract(false);
         flag.setCarry(result > 0xFF);
         self.setF(flag.get());
@@ -330,7 +334,7 @@ pub const Z80 = struct {
 
     pub fn sbc(self: *Z80, v1: u8, v2: u8) void {
         const carry: u8 = if (self.isCarry()) 1 else 0;
-        const result = v1 - v2 - carry;
+        const result = v1 -% v2 -% carry;
 
         // Symbol Field Name
         // C Carry Flag
@@ -351,12 +355,53 @@ pub const Z80 = struct {
 
         var flag = self.getFlag();
         flag.reset();
+        flag.setFromU8(result);
         flag.setSign(result & 0x80 == 0x80);
         flag.setZero(result == 0);
         flag.setHalfCarry((v1 & 0x0F) < (v2 & 0x0F) + carry);
         flag.setParityOverflow(result == 0x7F);
         flag.setSubtract(true);
-        flag.setCarry(result > 0xFF);
+        const carry_out = @as(u16, v1) < @as(u16, v2) + @as(u16, carry);
+        flag.setCarry(carry_out);
+        self.setF(flag.get());
+
+        self.setA(@as(u8, @intCast(result & 0xFF)));
+        self.cycles += 4;
+    }
+
+    pub fn sub(self: *Z80, v: u8) void {
+        // const result = self.getA() -% v;
+        const result = @as(u8, @intCast(self.getA() -% v));
+
+        // Symbol Field Name
+        // C Carry Flag
+        // N Add/Subtract
+        // P/V Parity/Overflow Flag
+        // H Half Carry Flag
+        // Z Zero Flag
+        // S Sign Flag
+        // X Not Used
+
+        // Condition Bits Affected
+        // S is set if result is negative; otherwise, it is reset.
+        // Z is set if result is 0; otherwise, it is reset.
+        // H is set if borrow from bit 4; otherwise, it is reset.
+        // P/V is reset if overflow; otherwise, it is reset.
+        // N is set.
+        // C is set if borrow; otherwise, it is reset.
+
+        var flag = self.getFlag();
+        flag.reset();
+        flag.setFromU8(result);
+        flag.setSign(result & 0x80 == 0x80);
+        flag.setZero(result == 0);
+        // std.debug.print("pc = {X:0>4}\n", .{self.pc});
+        flag.setHalfCarry((self.getA() & 0x0F) < (v & 0x0F));
+        const a = self.getA();
+        const po = ((((a ^ v) & (a ^ result)) & 0x80) != 0);
+        flag.setParityOverflow(po);
+        flag.setSubtract(true);
+        flag.setCarry(self.getA() < v);
         self.setF(flag.get());
 
         self.setA(@as(u8, @intCast(result & 0xFF)));
@@ -435,7 +480,7 @@ pub const Z80 = struct {
     }
 
     pub fn cp(self: *Z80, v: u8) void {
-        const result = self.getA() - v;
+        const result = self.getA() -% v;
 
         // Symbol Field Name
         // C Carry Flag
@@ -456,12 +501,13 @@ pub const Z80 = struct {
 
         var flag = self.getFlag();
         flag.reset();
+        flag.setXYFromU8(v);
         flag.setSign(result & 0x80 == 0x80);
         flag.setZero(result == 0);
-        flag.setHalfCarry((self.getA() & 0x0F) < (self.getA() & 0x0F));
+        flag.setHalfCarry((self.getA() & 0x0F) < (v & 0x0F));
         flag.setParityOverflow(result == 0x7F);
         flag.setSubtract(true);
-        flag.setCarry(result > 0xFF);
+        flag.setCarry(self.getA() < v);
         self.setF(flag.get());
 
         self.cycles += 4;
@@ -469,19 +515,15 @@ pub const Z80 = struct {
 
     pub fn rst(self: *Z80, address: u16) void {
         self.decSP();
-        self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
+        const byte1 = @as(u8, @intCast(self.pc >> 8));
+        self.writeByte(self.sp, byte1);
+
         self.decSP();
-        // std.debug.print("pc = {X:0>4} low = {X:0>2}\n", .{ self.pc, @as(u8, @intCast(self.pc & 0xFF)) });
-        self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+        const byte2 = @as(u8, @intCast(self.pc & 0xFF));
+        self.writeByte(self.sp, byte2);
+
         self.pc = address;
         self.cycles += 11;
-    }
-
-    // Fetch the next byte from memory
-    fn fetchByte(self: *Z80) u8 {
-        const byte = self.memory[self.pc];
-        self.pc +%= 1;
-        return byte;
     }
 
     fn incR(self: *Z80) void {
@@ -508,6 +550,13 @@ pub const Z80 = struct {
         return self.memory[self.pc];
     }
 
+    // Fetch the next byte from memory
+    fn fetchByte(self: *Z80) u8 {
+        const byte = self.memory[self.pc];
+        self.pc +%= 1;
+        return byte;
+    }
+
     // Fetch the next word (2 bytes) from memory
     fn fetchWord(self: *Z80) u16 {
         const lowByte: u8 = self.fetchByte();
@@ -516,8 +565,11 @@ pub const Z80 = struct {
     }
 
     pub fn writeByte(self: *Z80, address: u16, value: u8) void {
-        // std.debug.print("[w {X:0>4}] = {X:0>2}\n", .{ address, value });
-        self.memory[address] = value;
+        if (self.write != null) {
+            self.write.?(self, address, value);
+            return;
+        }
+        self.memory[@as(usize, address)] = value;
     }
 
     pub fn start(self: *Z80) void {
@@ -543,6 +595,11 @@ pub const Z80 = struct {
     pub fn isZero(self: *Z80) bool {
         var flag = self.getFlag();
         return flag.isZero();
+    }
+
+    pub fn isSign(self: *Z80) bool {
+        var flag = self.getFlag();
+        return flag.isSign();
     }
 
     pub fn isCarry(self: *Z80) bool {
@@ -574,10 +631,20 @@ pub const Z80 = struct {
                 self.bc = self.fetchWord();
                 self.cycles += 10;
             },
+            0x02 => {
+                // LD (BC), A
+                self.writeByte(self.bc, self.getA());
+                self.cycles += 7;
+            },
             0x03 => {
                 // INC BC
                 self.bc +%= 1;
                 self.cycles += 6;
+            },
+            0x04 => {
+                // INC B
+                self.setB(self.inc(self.getB()));
+                self.cycles += 4;
             },
             0x05 => {
                 // DEC B
@@ -634,6 +701,31 @@ pub const Z80 = struct {
                 self.de +%= 1;
                 self.cycles += 6;
             },
+            0x14 => {
+                // INC D
+                self.setD(self.inc(self.getD()));
+                self.cycles += 4;
+            },
+            0x17 => {
+                // RLA
+                var carry: u8 = undefined;
+                if (self.isCarry()) {
+                    carry = 1;
+                } else {
+                    carry = 0;
+                }
+                const a = self.getA();
+                const result = (a << 1) | carry;
+                self.setA(result);
+
+                var flag = self.getFlag();
+                flag.setXYFromU8(result);
+                flag.setCarry(a & 0x80 == 0x80);
+                flag.setHalfCarry(false);
+                self.setF(flag.get());
+
+                self.cycles += 4;
+            },
             0x19 => {
                 // ADD HL, DE
                 self.hl = self.add16(self.hl, self.de);
@@ -650,8 +742,28 @@ pub const Z80 = struct {
             },
             0x1D => {
                 // DEC E
-                self.decE();
-                self.pc +%= 1;
+                self.setE(self.dec(self.getE()));
+                self.cycles += 4;
+            },
+            0x1F => {
+                // RRA
+                var carry: u8 = undefined;
+                if (self.isCarry()) {
+                    carry = 0x80;
+                } else {
+                    carry = 0;
+                }
+                const a = self.getA();
+                const result = (a >> 1) | carry;
+                self.setA(result);
+
+                var flag = self.getFlag();
+                flag.setXYFromU8(result);
+                flag.setCarry(a & 0x01 == 0x01);
+                flag.setHalfCarry(false);
+                flag.setSubtract(false);
+                self.setF(flag.get());
+
                 self.cycles += 4;
             },
             0x20 => {
@@ -687,10 +799,41 @@ pub const Z80 = struct {
                 self.setH(self.inc(self.getH()));
                 self.cycles += 4;
             },
+            0x25 => {
+                // DEC H
+                self.setH(self.dec(self.getH()));
+                self.cycles += 4;
+            },
             0x26 => {
                 // LD H, n
                 self.setH(self.fetchByte());
                 self.cycles += 7;
+            },
+            0x27 => {
+                // DAA
+                var a = self.getA();
+                var flag = self.getFlag();
+                var adjust: u8 = 0;
+                if (flag.isHalfCarry() or (!flag.isSubtract() and (a & 0x0F) > 9)) {
+                    adjust = 0x06;
+                }
+                if (flag.isCarry() or (!flag.isSubtract() and a > 0x99)) {
+                    adjust |= 0x60;
+                    flag.setCarry(true);
+                }
+                if (flag.isSubtract()) {
+                    a -%= adjust;
+                } else {
+                    a +%= adjust;
+                }
+                flag.setXYFromU8(a);
+                flag.setHalfCarry(false);
+                flag.setZero(a == 0);
+                flag.setParityOverflow(utils.countSetBits(a) % 2 == 0);
+                flag.setSign(a & 0x80 == 0x80);
+                self.setA(a);
+                self.setF(flag.get());
+                self.cycles += 4;
             },
             0x28 => {
                 // JR Z, n
@@ -723,6 +866,11 @@ pub const Z80 = struct {
             0x2C => {
                 // INC L
                 self.setL(self.inc(self.getL()));
+                self.cycles += 4;
+            },
+            0x2D => {
+                // DEC L
+                self.setL(self.dec(self.getL()));
                 self.cycles += 4;
             },
             0x2F => {
@@ -820,6 +968,17 @@ pub const Z80 = struct {
                 self.setA(self.fetchByte());
                 self.cycles += 7;
             },
+            0x3F => {
+                // CCF
+                const carry = self.isCarry();
+                var flag = self.getFlag();
+                flag.setXYFromU8(self.getA());
+                flag.setCarry(!flag.isCarry());
+                flag.setHalfCarry(carry);
+                flag.setSubtract(false);
+                self.setF(flag.get());
+                self.cycles += 4;
+            },
             0x42 => {
                 // LD B, D
                 self.setB(self.getD());
@@ -828,6 +987,11 @@ pub const Z80 = struct {
             0x43 => {
                 // LD B, E
                 self.setB(self.getE());
+                self.cycles += 4;
+            },
+            0x44 => {
+                // LD B, H
+                self.setB(self.getH());
                 self.cycles += 4;
             },
             0x46 => {
@@ -848,6 +1012,11 @@ pub const Z80 = struct {
             0x50 => {
                 // LD D, B
                 self.setD(self.getB());
+                self.cycles += 4;
+            },
+            0x51 => {
+                // LD D, C
+                self.setD(self.getC());
                 self.cycles += 4;
             },
             0x52 => {
@@ -905,12 +1074,22 @@ pub const Z80 = struct {
                 self.setH(self.getA());
                 self.cycles += 4;
             },
-            0x6c => {
+            0x69 => {
+                // LD L, C
+                self.setL(self.getC());
+                self.cycles += 4;
+            },
+            0x6B => {
+                // LD L, E
+                self.setL(self.getE());
+                self.cycles += 4;
+            },
+            0x6C => {
                 // LD L, H
                 self.setL(self.getH());
                 self.cycles += 4;
             },
-            0x6d => {
+            0x6D => {
                 // LD L, L
                 self.setL(self.getL());
                 self.cycles += 4;
@@ -990,45 +1169,29 @@ pub const Z80 = struct {
                 // ADD A, C
                 self.add(self.getA(), self.getC());
             },
+            0x82 => {
+                // ADD A, D
+                self.add(self.getA(), self.getD());
+            },
+            0x83 => {
+                // ADD A, E
+                self.add(self.getA(), self.getE());
+            },
+            0x87 => {
+                // ADD A, A
+                self.add(self.getA(), self.getA());
+            },
+            0x88 => {
+                // ADC A, B
+                self.adc(self.getB());
+            },
             0x8F => {
                 // ADC A, A
                 self.adc(self.getA());
             },
             0x95 => {
                 // SUB L
-                const result = self.getA() - self.getL();
-
-                // Symbol Field Name
-                // C Carry Flag
-                // N Add/Subtract
-                // P/V Parity/Overflow Flag
-                // H Half Carry Flag
-                // Z Zero Flag
-                // S Sign Flag
-                // X Not Used
-
-                // Condition Bits Affected
-                // S is set if result is negative; otherwise, it is reset.
-                // Z is set if result is 0; otherwise, it is reset.
-                // H is set if borrow from bit 4; otherwise, it is reset.
-                // P/V is reset if overflow; otherwise, it is reset.
-                // N is set.
-                // C is set if borrow; otherwise, it is reset.
-
-                var flag = self.getFlag();
-                flag.reset();
-                flag.setFromU8(result);
-                flag.setSign(result & 0x80 == 0x80);
-                flag.setZero(result == 0);
-                // std.debug.print("pc = {X:0>4}\n", .{self.pc});
-                flag.setHalfCarry((self.getA() & 0x0F) < (self.getL() & 0x0F));
-                flag.setParityOverflow(result == 0x7F);
-                flag.setSubtract(true);
-                flag.setCarry(result > 0xFF);
-                self.setF(flag.get());
-
-                self.setA(@as(u8, @intCast(result & 0xFF)));
-                self.cycles += 4;
+                self.sub(self.getL());
             },
             0x9C => {
                 // SBC A, H
@@ -1037,6 +1200,18 @@ pub const Z80 = struct {
             0x9D => {
                 // SBC A, L
                 self.sbc(self.getA(), self.getH());
+            },
+            0xA1 => {
+                // AND C
+                self.andOp(self.getC());
+            },
+            0xA3 => {
+                // AND E
+                self.andOp(self.getE());
+            },
+            0xA4 => {
+                // AND H
+                self.andOp(self.getH());
             },
             0xA8 => {
                 // XOR B
@@ -1054,6 +1229,10 @@ pub const Z80 = struct {
                 // OR C
                 self.orOp(self.getC());
             },
+            0xB9 => {
+                // CP C
+                self.cp(self.getC());
+            },
             0xBE => {
                 // CP (HL)
                 self.cp(self.memory[self.hl]);
@@ -1061,6 +1240,19 @@ pub const Z80 = struct {
             0xBF => {
                 // CP A
                 self.cp(self.getA());
+            },
+            0xC0 => {
+                // RET NZ
+                if (!self.isZero()) {
+                    const lo: u16 = @intCast(self.memory[self.sp]);
+                    const hi: u16 = @intCast(self.memory[self.sp + 1]);
+                    self.incSP();
+                    self.incSP();
+                    self.pc = hi << 8 | lo;
+                    self.cycles += 11;
+                } else {
+                    self.cycles += 5;
+                }
             },
             0xC1 => {
                 // POP BC
@@ -1096,7 +1288,7 @@ pub const Z80 = struct {
             0xC9 => {
                 // RET
                 const lo: u16 = @intCast(self.memory[self.sp]);
-                const hi: u16 = @intCast(self.memory[self.sp + 1]);
+                const hi: u16 = @intCast(self.memory[self.sp +% 1]);
                 self.incSP();
                 self.incSP();
                 self.pc = hi << 8 | lo;
@@ -1105,17 +1297,33 @@ pub const Z80 = struct {
             0xCD => {
                 // CALL nn
                 // The current PC value plus three is pushed onto the stack, then is loaded with nn.
+
+                // const pc = self.pc;
+                const nn = self.fetchWord();
                 self.decSP();
-                self.writeByte(self.sp, @as(u8, @intCast((self.pc + 2) >> 8)));
+                self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
                 self.decSP();
-                self.writeByte(self.sp, @as(u8, @intCast((self.pc + 2) & 0xFF)));
-                self.pc = self.fetchWord();
+                self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+                self.pc = nn;
                 self.cycles += 17;
             },
             0xCE => {
                 // ADC A, n
                 const n = self.fetchByte();
                 self.adc(n);
+            },
+            0xD0 => {
+                // RET NC
+                if (!self.isCarry()) {
+                    const lo: u16 = @intCast(self.memory[self.sp]);
+                    const hi: u16 = @intCast(self.memory[self.sp + 1]);
+                    self.incSP();
+                    self.incSP();
+                    self.pc = hi << 8 | lo;
+                    self.cycles += 11;
+                } else {
+                    self.cycles += 5;
+                }
             },
             0xD1 => {
                 // POP DE
@@ -1133,12 +1341,17 @@ pub const Z80 = struct {
                 self.writeByte(self.sp, self.getE());
                 self.cycles += 11;
             },
+            0xD6 => {
+                // SUB n
+                const n = self.fetchByte();
+                self.sub(n);
+            },
             0xD7 => {
                 // RST 10H
                 self.decSP();
-                self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
+                // self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
                 self.decSP();
-                self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+                // self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
                 self.pc = 0x10;
                 self.cycles += 11;
             },
@@ -1325,6 +1538,22 @@ pub const Z80 = struct {
                 self.iff1 = false;
                 self.iff2 = false;
                 self.cycles += 4;
+            },
+            0xF4 => {
+                // CALL P, nn
+                // If the sign flag is unset, the current PC value plus three
+                // is pushed onto the stack, then is loaded with nn.
+                const addr = self.fetchWord();
+                if (!self.isSign()) {
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+                    self.pc = addr;
+                    self.cycles += 17;
+                } else {
+                    self.cycles += 10;
+                }
             },
             0xF5 => {
                 // PUSH AF
@@ -1680,11 +1909,6 @@ fn pop__ix(self: *Z80) void {
     self.ix |= @as(u16, @intCast(self.memory[self.sp])) << 8;
     self.incSP();
     self.cycles += 14;
-}
-
-fn tst(cpu: *Z80) void {
-    _ = cpu;
-    std.debug.print("tst\n", .{});
 }
 
 // 0xDD
