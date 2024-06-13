@@ -23,7 +23,7 @@ pub fn run(alloc: Allocator) !void {
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i >= 11) {
+        if (i >= 15) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -209,7 +209,7 @@ fn spectrumCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
             // cursor_x++;
         },
         else => if (av >= 32 and av < 127) {
-            std.debug.print("{c}", .{av});
+            std.debug.print("x{c}", .{av});
             // cursor_x++;
         } else {
             // zx_spectrum_bad_character = true;

@@ -244,6 +244,7 @@ pub const Z80 = struct {
         flag.setFromIncDec(v, res);
         flag.setSubtract(false);
         flag.setHalfCarry((v & 0x0F) + 1 > 0x0F);
+        flag.setParityOverflow(v == 0x7F);
         self.setF(flag.get());
         return res;
     }
@@ -516,7 +517,10 @@ pub const Z80 = struct {
         flag.setSign(result & 0x80 == 0x80);
         flag.setZero(result == 0);
         flag.setHalfCarry((self.getA() & 0x0F) < (v & 0x0F));
-        flag.setParityOverflow(result == 0x7F);
+        const a = self.getA();
+        const po = ((((a ^ v) & (a ^ result)) & 0x80) != 0);
+        flag.setParityOverflow(po);
+        // flag.setParityOverflow(result == 0x7F);
         flag.setSubtract(true);
         flag.setCarry(self.getA() < v);
         self.setF(flag.get());
@@ -683,6 +687,29 @@ pub const Z80 = struct {
                 self.setB(self.fetchByte());
                 self.cycles += 7;
             },
+            0x07 => {
+                // RLCA
+                const a = self.getA();
+                const carry = a & 0x80 == 0x80;
+                const result = (a << 1) | (a >> 7);
+                self.setA(result);
+
+                var flag = self.getFlag();
+                flag.setXYFromU8(result);
+                flag.setCarry(carry);
+                flag.setHalfCarry(false);
+                flag.setSubtract(false);
+                self.setF(flag.get());
+
+                self.cycles += 4;
+            },
+            0x08 => {
+                // EX AF, AF'
+                const tmp = self.af;
+                self.af = self.af_;
+                self.af_ = tmp;
+                self.cycles += 4;
+            },
             0x09 => {
                 // ADD HL, BC
                 const sum: u32 = self.hl + self.bc;
@@ -701,6 +728,16 @@ pub const Z80 = struct {
                 // LD A, (BC)
                 self.setA(self.memory[self.bc]);
                 self.cycles += 7;
+            },
+            0x0B => {
+                // DEC BC
+                self.bc -%= 1;
+                self.cycles += 6;
+            },
+            0x0C => {
+                // INC C
+                self.setC(self.inc(self.getC()));
+                self.cycles += 4;
             },
             0x0D => {
                 // DEC C
@@ -766,6 +803,11 @@ pub const Z80 = struct {
                 // DEC DE
                 self.de -%= 1;
                 self.cycles += 6;
+            },
+            0x1C => {
+                // INC E
+                self.setE(self.inc(self.getE()));
+                self.cycles += 4;
             },
             0x1D => {
                 // DEC E
@@ -838,28 +880,55 @@ pub const Z80 = struct {
             },
             0x27 => {
                 // DAA
-                var a = self.getA();
-                var flag = self.getFlag();
-                var adjust: u8 = 0;
-                if (flag.isHalfCarry() or (!flag.isSubtract() and (a & 0x0F) > 9)) {
-                    adjust = 0x06;
+                // Adapted from: https://stackoverflow.com/a/57837042/14540
+                var t: u8 = 0;
+                var flags = self.getFlag();
+                if (flags.isHalfCarry() or (self.getA() & 0x0F) > 9) {
+                    t += 1;
                 }
-                if (flag.isCarry() or (!flag.isSubtract() and a > 0x99)) {
-                    adjust |= 0x60;
-                    flag.setCarry(true);
+                if (flags.isCarry() or self.getA() > 0x99) {
+                    t += 2;
+                    flags.setCarry(true);
                 }
-                if (flag.isSubtract()) {
-                    a -%= adjust;
+                if (flags.isSubtract() and !flags.isHalfCarry()) {
+                    flags.setHalfCarry(false);
                 } else {
-                    a +%= adjust;
+                    if (flags.isSubtract() and flags.isHalfCarry()) {
+                        flags.setHalfCarry((self.getA() & 0x0F) < 6);
+                    } else {
+                        flags.setHalfCarry((self.getA() & 0x0F) >= 0x0A);
+                    }
                 }
-                flag.setXYFromU8(a);
-                flag.setHalfCarry(false);
-                flag.setZero(a == 0);
-                flag.setParityOverflow(utils.countSetBits(a) % 2 == 0);
-                flag.setSign(a & 0x80 == 0x80);
-                self.setA(a);
-                self.setF(flag.get());
+                switch (t) {
+                    1 => {
+                        if (flags.isSubtract()) {
+                            self.setA(self.getA() + 0xFA);
+                        } else {
+                            self.setA(self.getA() + 0x06);
+                        }
+                    },
+                    2 => {
+                        if (flags.isSubtract()) {
+                            self.setA(self.getA() + 0xA0);
+                        } else {
+                            self.setA(self.getA() + 0x60);
+                        }
+                    },
+                    3 => {
+                        if (flags.isSubtract()) {
+                            self.setA(self.getA() + 0x9A);
+                        } else {
+                            self.setA(self.getA() + 0x66);
+                        }
+                    },
+                    else => {},
+                }
+
+                flags.setSign(self.getA() & 0x80 == 0x80);
+                flags.setZero(self.getA() == 0);
+                flags.setParityOverflow(utils.countSetBits(self.getA()) % 2 == 0);
+                flags.setXYFromU8(self.getA());
+                self.setF(flags.get());
                 self.cycles += 4;
             },
             0x28 => {
@@ -1031,9 +1100,19 @@ pub const Z80 = struct {
                 self.setB(self.getA());
                 self.cycles += 4;
             },
+            0x48 => {
+                // LD C, B
+                self.setC(self.getB());
+                self.cycles += 4;
+            },
             0x49 => {
                 // LD C, C
                 self.setC(self.getC());
+                self.cycles += 4;
+            },
+            0x4A => {
+                // LD C, D
+                self.setC(self.getD());
                 self.cycles += 4;
             },
             0x50 => {
@@ -1051,6 +1130,11 @@ pub const Z80 = struct {
                 self.setD(self.getD());
                 self.cycles += 4;
             },
+            0x53 => {
+                // LD D, E
+                self.setD(self.getE());
+                self.cycles += 4;
+            },
             0x54 => {
                 // LD D, H
                 self.setD(self.getH());
@@ -1059,6 +1143,11 @@ pub const Z80 = struct {
             0x58 => {
                 // LD E, B
                 self.setE(self.getB());
+                self.cycles += 4;
+            },
+            0x5B => {
+                // LD E, E
+                self.setE(self.getE());
                 self.cycles += 4;
             },
             0x60 => {
@@ -1099,6 +1188,11 @@ pub const Z80 = struct {
             0x67 => {
                 // LD H, A
                 self.setH(self.getA());
+                self.cycles += 4;
+            },
+            0x68 => {
+                // LD L, B
+                self.setL(self.getB());
                 self.cycles += 4;
             },
             0x69 => {
@@ -1212,6 +1306,14 @@ pub const Z80 = struct {
                 // ADC A, B
                 self.adc(self.getB());
             },
+            0x89 => {
+                // ADC A, C
+                self.adc(self.getC());
+            },
+            0x8C => {
+                // ADC A, H
+                self.adc(self.getH());
+            },
             0x8F => {
                 // ADC A, A
                 self.adc(self.getA());
@@ -1219,6 +1321,10 @@ pub const Z80 = struct {
             0x95 => {
                 // SUB L
                 self.sub(self.getL());
+            },
+            0x9A => {
+                // SBC A, D
+                self.sbc(self.getA(), self.getD());
             },
             0x9C => {
                 // SBC A, H
@@ -1240,6 +1346,14 @@ pub const Z80 = struct {
                 // AND H
                 self.andOp(self.getH());
             },
+            0xA5 => {
+                // AND L
+                self.andOp(self.getL());
+            },
+            0xA7 => {
+                // AND A
+                self.andOp(self.getA());
+            },
             0xA8 => {
                 // XOR B
                 self.xorOp(self.getB());
@@ -1256,9 +1370,21 @@ pub const Z80 = struct {
                 // OR C
                 self.orOp(self.getC());
             },
+            0xB8 => {
+                // CP B
+                self.cp(self.getB());
+            },
             0xB9 => {
                 // CP C
                 self.cp(self.getC());
+            },
+            0xBC => {
+                // CP H
+                self.cp(self.getH());
+            },
+            0xBD => {
+                // CP L
+                self.cp(self.getL());
             },
             0xBE => {
                 // CP (HL)
@@ -1360,6 +1486,20 @@ pub const Z80 = struct {
                 self.incSP();
                 self.cycles += 10;
             },
+            0xD2 => {
+                // JP NC, nn
+                const addr = self.fetchWord();
+                if (!self.isCarry()) {
+                    self.pc = addr;
+                }
+                self.cycles += 10;
+            },
+            0xD3 => {
+                // OUT (n), A
+                const port = self.fetchByte();
+                self.writeToPort(port, self.getA());
+                self.cycles += 11;
+            },
             0xD5 => {
                 // PUSH DE
                 self.decSP();
@@ -1381,6 +1521,19 @@ pub const Z80 = struct {
                 // self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
                 self.pc = 0x10;
                 self.cycles += 11;
+            },
+            0xD8 => {
+                // RET C
+                if (self.isCarry()) {
+                    const lo: u16 = @intCast(self.memory[self.sp]);
+                    const hi: u16 = @intCast(self.memory[self.sp + 1]);
+                    self.incSP();
+                    self.incSP();
+                    self.pc = hi << 8 | lo;
+                    self.cycles += 11;
+                } else {
+                    self.cycles += 5;
+                }
             },
             0xD9 => {
                 // EXX
@@ -1433,6 +1586,10 @@ pub const Z80 = struct {
                 self.setH(self.memory[self.sp]);
                 self.incSP();
                 self.cycles += 10;
+            },
+            0xE7 => {
+                // RST 20H
+                self.rst(0x20);
             },
             0xEB => {
                 // EX DE, HL
@@ -1552,6 +1709,19 @@ pub const Z80 = struct {
                 // AND n
                 self.andOp(self.fetchByte());
             },
+            0xF0 => {
+                // RET P
+                if (!self.isSign()) {
+                    const lo: u16 = @intCast(self.memory[self.sp]);
+                    const hi: u16 = @intCast(self.memory[self.sp + 1]);
+                    self.incSP();
+                    self.incSP();
+                    self.pc = hi << 8 | lo;
+                    self.cycles += 11;
+                } else {
+                    self.cycles += 5;
+                }
+            },
             0xF1 => {
                 // POP AF
                 self.setF(self.memory[self.sp]);
@@ -1598,6 +1768,22 @@ pub const Z80 = struct {
             0xFB => {
                 // EI
                 self.cycles += 4;
+            },
+            0xFC => {
+                // CALL M, nn
+                // If the sign flag is set, the current PC value plus three
+                // is pushed onto the stack, then is loaded with nn.
+                const addr = self.fetchWord();
+                if (self.isSign()) {
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+                    self.pc = addr;
+                    self.cycles += 17;
+                } else {
+                    self.cycles += 10;
+                }
             },
             0xFD => {
                 // IY Extended Instructions
@@ -1681,6 +1867,10 @@ pub const Z80 = struct {
                 //         self.cycles += 1;
                 //     },
                 // }
+            },
+            0xFE => {
+                // CP n
+                self.cp(self.fetchByte());
             },
             0xFF => {
                 // RST 38H
@@ -1938,6 +2128,13 @@ fn pop__ix(self: *Z80) void {
     self.cycles += 14;
 }
 
+fn ldiyl_b(self: *Z80) void {
+    // 0xFD 0x68 LD IYL, B
+    const iyh = @as(u8, @intCast(self.iy >> 8));
+    self.iy = @as(u16, @intCast(iyh)) << 8 | @as(u16, @intCast(self.getB()));
+    self.cycles += 8;
+}
+
 // 0xDD
 const IX_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
@@ -1967,7 +2164,7 @@ const IY_TABLE: [256]?*const fn (*Z80) void = .{
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 3
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 4
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 5
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 6
+    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, ldiyl_b, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 6
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 7
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 8
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 9
