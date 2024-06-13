@@ -50,6 +50,12 @@ pub const Z80 = struct {
     // Hook handler
     hook: ?*const fn (*Z80, address: u16) void,
 
+    // Write to port (OUT)
+    out: ?*const fn (*Z80, port: u8, value: u8) void,
+
+    // Read from port (IN)
+    in: ?*const fn (*Z80, port: u8) u8,
+
     // Initialize the CPU state
     pub fn init() Z80 {
         const memory: [65536]u8 = [_]u8{0} ** 65536;
@@ -90,6 +96,8 @@ pub const Z80 = struct {
             .pending_opcode = null,
             .write = null,
             .hook = null,
+            .out = null,
+            .in = null,
         };
     }
 
@@ -114,6 +122,9 @@ pub const Z80 = struct {
         self.cycles = 0;
         self.halt = false;
         self.pending_opcode = null;
+        // self.write = null;
+        // self.hook = null;
+        // self.out = null;
         self.clearMemory();
     }
 
@@ -570,6 +581,22 @@ pub const Z80 = struct {
             return;
         }
         self.memory[@as(usize, address)] = value;
+    }
+
+    pub fn writeToPort(self: *Z80, port: u8, value: u8) void {
+        if (self.out != null) {
+            self.out.?(self, port, value);
+            return;
+        }
+        std.debug.print("OUT {X:0>2}, {X:0>2}\n", .{ port, value });
+    }
+
+    pub fn readFromPort(self: *Z80, port: u8) u8 {
+        if (self.in != null) {
+            return self.in.?(self, port);
+        }
+        std.debug.print("IN {X:0>2}\n", .{port});
+        return 0;
     }
 
     pub fn start(self: *Z80) void {
