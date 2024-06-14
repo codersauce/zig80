@@ -14,16 +14,30 @@ const TestError = error{
     BenchmarkCpuMismatch,
 };
 
+const TestFormat = enum(u8) {
+    cpm = 0,
+    harston = 1,
+    rak = 2,
+    woodmass = 3,
+};
+
+const OPCODE_NOP: u8 = 0x00;
+const OPCODE_RET: u8 = 0xC9;
+const OPCODE_HALT: u8 = 0x76;
+const OPCODE_CALL_WORD: u8 = 0xCD;
+const OPCODE_JP_WORD: u8 = 0xC3;
+
 var memory: [0x10000]u8 = undefined; // 64KB
 var a: u8 = 0xFF;
 var zx_spectrum_print_hook_address: u16 = 0;
+var zx_spectrum_tab: u8 = 0;
 
 pub fn run(alloc: Allocator) !void {
     try downloadAndExtract(alloc);
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i >= 15) {
+        if (i >= 0) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -87,30 +101,77 @@ fn cpuRead(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
     return opcode;
 }
 
-fn cpmCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+fn cpmTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
     _ = context;
-    // std.debug.print("write: {x} {x}\n", .{ address, value });
+    // std.debug.print("[theirs] write: {X:0>4} {X:0>2}\n", .{ address, value });
     memory[address] = value;
 }
 
-fn cpmCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
-    if (address == zx_spectrum_print_hook_address) {
-        std.debug.print("hook: {x}\n", .{address});
+fn cpmCpuWrite(cpu: *Z80, address: u16, value: u8) void {
+    // std.debug.print("[ours  ] write: {X:0>4} {X:0>2}\n", .{ address, value });
+    cpu.memory[address] = value;
+}
+
+fn cpmTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+    const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
+    const cv: u8 = @intCast(cpu.bc.uint16_value & 0xFF);
+    const de: u16 = cpu.de.uint16_value;
+    // printTheirState(cpu);
+    // std.debug.print("[theirs] hook: address={X:0>4} c={X:0>2} de={X:0>4}\n", .{ address, cv, de });
+    return cpmHook(address, cv, de);
+}
+
+fn cpmCpuHook(cpu: *Z80, address: u16) u8 {
+    const cv: u8 = cpu.getC();
+    const de: u16 = cpu.de;
+    // cpu.printState();
+    // std.debug.print("[ours  ] hook: address={X:0>4} c={X:0>2} de={X:0>4}\n", .{ address, cv, de });
+    return cpmHook(address, cv, de);
+}
+
+fn printTheirState(cpu: *c.Z80) void {
+    const av = cpu.af.uint16_value >> 8;
+    const fv = cpu.af.uint16_value & 0xFF;
+    const bv = cpu.bc.uint16_value >> 8;
+    const cv = cpu.bc.uint16_value & 0xFF;
+    const dv = cpu.de.uint16_value >> 8;
+    const ev = cpu.de.uint16_value & 0xFF;
+    const hv = cpu.hl.uint16_value >> 8;
+    const lv = cpu.hl.uint16_value & 0xFF;
+
+    std.debug.print("[theirs] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} sp={X:0>4} pc={X:0>4}\n", .{ av, fv, bv, cv, dv, ev, hv, lv, cpu.sp.uint16_value, cpu.pc.uint16_value });
+}
+
+fn cpmHook(address: u16, cv: u8, de: u16) u8 {
+    if (address != 5) {
+        return 0x00;
     }
 
-    const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
-    const cv: u8 = @intCast(cpu.bc.uint16_value >> 8);
+    // std.debug.print("hook: {x}\n", .{address});
 
     if (cv == 2) {
-        const char: u8 = @intCast(cpu.de.uint16_value & 0xFF);
-        std.debug.print("{c}", .{char});
+        // BDOS function 2 (C_WRITE) - Console output
+        const char: u8 = @intCast(de & 0xFF);
+        switch (char) {
+            0x0A => {
+                std.debug.print("\n", .{});
+            },
+            0x0D => {
+                // do nothing?
+            },
+            else => {
+                std.debug.print("{c}", .{char});
+            },
+        }
     } else if (cv == 9) {
-        var i = cpu.de.uint16_value;
+        // BDOS function 9 (C_WRITESTR) - Output string
+        var i = de;
         var ci: u8 = 255;
 
         while (ci > 0) {
             ci -= 1;
             const char: u8 = memory[i];
+            // std.debug.print("{c}", .{char});
             i += 1;
             if (char == 0x24) {
                 return 0xC9;
@@ -124,50 +185,7 @@ fn cpmCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
         }
     }
 
-    // if (Z80_C(cpu) == 2) {
-    //   hash = Z_FNV1_32_UPDATE(hash, (character = Z80_E(cpu)));
-    //
-    //   switch (character) {
-    //   case 0x0A: /* LF */
-    //     cr();
-    //   case 0x0D: /* CR */
-    //     break;
-    //
-    //   default:
-    //     if (show_test_output)
-    //       putchar(character);
-    //     cursor_x++;
-    //   }
-    // }
-    //
-    // /* BDOS function 9 (C_WRITESTR) - Output string */
-    // else if (Z80_C(cpu) == 9) {
-    //   zuint16 i = Z80_DE(cpu);
-    //   zuint c = 255;
-    //
-    //   while (c--) {
-    //     hash = Z_FNV1_32_UPDATE(hash, (character = memory[i++]));
-    //
-    //     switch (character) {
-    //     case 0x24: /* $  */
-    //       return OPCODE_RET;
-    //     case 0x0A: /* LF */
-    //       cr();
-    //     case 0x0D: /* CR */
-    //       break;
-    //
-    //     default:
-    //       if (show_test_output)
-    //         putchar(character);
-    //       cursor_x++;
-    //     }
-    //   }
-    //
-    //   if (show_test_output)
-    //     puts(" [TRUNCATED]");
-    // }
-
-    return 0xC9;
+    return OPCODE_RET;
 }
 
 fn spectrumWrite(self: *Z80, address: u16, value: u8) void {
@@ -185,35 +203,49 @@ fn spectrumCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv
 
 fn spectrumCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
     if (context == null) {
+        std.debug.print("context is null\n", .{});
         return 0x00;
     }
     const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
-    const av: u8 = @intCast(cpu.af.uint16_value >> 8);
+    const character: u8 = @intCast(cpu.af.uint16_value >> 8);
     if (address != zx_spectrum_print_hook_address) {
         return 0x00;
     }
     // std.debug.print("** {X:0>4}  {X:0>2} ** ", .{ address, av });
 
-    switch (av) {
-        0x0D => {
-            // CR
+    if (zx_spectrum_tab == 0) {
+        switch (character) {
+            0x0D => {
+                // CR
+                std.debug.print("\n", .{});
+            },
+            0x17 => {
+                // TAB
+                zx_spectrum_tab = 2;
+            },
+            0x7F => {
+                // ©
+                std.debug.print("©", .{});
+                // cursor_x++;
+            },
+            else => if (character >= 32 and character < 127) {
+                std.debug.print("x{c}", .{character});
+                // cursor_x++;
+            } else {
+                // zx_spectrum_bad_character = true;
+            },
+        }
+    } else {
+        zx_spectrum_tab -= 1;
+        if (zx_spectrum_tab > 0) {
+            var ch: usize = character & (32 - 1);
+
             std.debug.print("\n", .{});
-        },
-        0x17 => {
-            // TAB
-            // zx_spectrum_tab = 2;
-        },
-        0x7F => {
-            // ©
-            std.debug.print("©", .{});
-            // cursor_x++;
-        },
-        else => if (av >= 32 and av < 127) {
-            std.debug.print("x{c}", .{av});
-            // cursor_x++;
-        } else {
-            // zx_spectrum_bad_character = true;
-        },
+            while (ch > 0) {
+                std.debug.print(" ", .{});
+                ch -= 1;
+            }
+        }
     }
 
     return 0x00;
@@ -483,7 +515,7 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
     c.z80_power(bench_cpu, true);
     bench_cpu.pc.uint16_value = t.start_address;
 
-    if (t.format == 0) {
+    if (t.format == TestFormat.cpm) {
         std.debug.print("CP/M Format\n", .{});
         // CP/M Format
         // cpu.fetch_opcode = cpu_read;
@@ -491,8 +523,10 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
         // cpu.hook = cpm_cpu_hook;
         // memory[0] = OPCODE_HALT;
         // memory[5] = Z80_HOOK; /* PRINT */
-        bench_cpu.write = cpmCpuWrite;
-        bench_cpu.hook = cpmCpuHook;
+        bench_cpu.write = cpmTheirWrite;
+        bench_cpu.hook = cpmTheirHook;
+        cpu.write = cpmCpuWrite;
+        cpu.hook = cpmCpuHook;
         memory[0] = 0x76; // halt
         memory[5] = 0x64; // print
         cpu.memory[0] = 0x76; // HALT
@@ -514,12 +548,12 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
         memory[0x1601] = 0xC9; // ret
 
         cpu.write = spectrumWrite;
+        cpu.hook = cpuHook;
         cpu.im = 1;
         cpu.i = 0x3F;
         cpu.memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)
         cpu.memory[0x0D6B] = 0xC9; // ret
         cpu.memory[0x1601] = 0xC9; // ret
-        cpu.trap = &cpuHook;
         // cpu.fetch_opcode = cpu_read;
         //
         // /* 0010: THE 'PRINT A CHARACTER' RESTART */
@@ -605,7 +639,7 @@ const Test = struct {
     /// Offset of the executable code inside the file.
     code_offset: u8,
     /// Format of the program.
-    format: u8,
+    format: TestFormat,
     /// Number of lines printed when the test is passed.
     lines: u8,
     /// Rightmost position reached by the cursor when the test is passed.
@@ -623,7 +657,7 @@ pub const Tests = [_]Test{
         .file_size = 8704,
         .code_size = 8704,
         .code_offset = 0,
-        .format = 0,
+        .format = TestFormat.cpm,
         .lines = 68,
         .columns = 34,
     },
@@ -637,7 +671,7 @@ pub const Tests = [_]Test{
         .file_size = 8716,
         .code_size = 8624,
         .code_offset = 91,
-        .format = 1,
+        .format = TestFormat.harston,
         .lines = 69,
         .columns = 32,
     },
@@ -651,7 +685,7 @@ pub const Tests = [_]Test{
         .file_size = 8704,
         .code_size = 8704,
         .code_offset = 0,
-        .format = 0,
+        .format = TestFormat.cpm,
         .lines = 68,
         .columns = 34,
     },
@@ -665,7 +699,7 @@ pub const Tests = [_]Test{
         .file_size = 8656,
         .code_size = 8547,
         .code_offset = 108,
-        .format = 1,
+        .format = TestFormat.harston,
         .lines = 69,
         .columns = 31,
     },
@@ -679,7 +713,7 @@ pub const Tests = [_]Test{
         .file_size = 8656,
         .code_size = 8547,
         .code_offset = 108,
-        .format = 1,
+        .format = TestFormat.harston,
         .lines = 4,
         .columns = 31,
     },
@@ -693,7 +727,7 @@ pub const Tests = [_]Test{
         .file_size = 8704,
         .code_size = 8612,
         .code_offset = 91,
-        .format = 1,
+        .format = TestFormat.harston,
         .lines = 69,
         .columns = 32,
     },
@@ -707,7 +741,7 @@ pub const Tests = [_]Test{
         .file_size = 8716,
         .code_size = 8624,
         .code_offset = 91,
-        .format = 1,
+        .format = TestFormat.harston,
         .lines = 69,
         .columns = 32,
     },
@@ -721,7 +755,7 @@ pub const Tests = [_]Test{
         .file_size = 9316,
         .code_size = 9228,
         .code_offset = 87,
-        .format = 1,
+        .format = TestFormat.harston,
         .lines = 76,
         .columns = 31,
     },
@@ -735,7 +769,7 @@ pub const Tests = [_]Test{
         .file_size = 5573,
         .code_size = 5452,
         .code_offset = 120,
-        .format = 2,
+        .format = TestFormat.rak,
         .lines = 50,
         .columns = 32,
     },
@@ -749,7 +783,7 @@ pub const Tests = [_]Test{
         .file_size = 5573,
         .code_size = 5452,
         .code_offset = 120,
-        .format = 2,
+        .format = TestFormat.rak,
         .lines = 61,
         .columns = 32,
     },
@@ -763,7 +797,7 @@ pub const Tests = [_]Test{
         .file_size = 13758,
         .code_size = 13666,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 156,
         .columns = 32,
     },
@@ -777,7 +811,7 @@ pub const Tests = [_]Test{
         .file_size = 13758,
         .code_size = 13666,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 156,
         .columns = 32,
     },
@@ -791,7 +825,7 @@ pub const Tests = [_]Test{
         .file_size = 13758,
         .code_size = 13666,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 156,
         .columns = 32,
     },
@@ -805,7 +839,7 @@ pub const Tests = [_]Test{
         .file_size = 13758,
         .code_size = 13666,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 156,
         .columns = 32,
     },
@@ -819,7 +853,7 @@ pub const Tests = [_]Test{
         .file_size = 14219,
         .code_size = 14127,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 156,
         .columns = 32,
     },
@@ -833,7 +867,7 @@ pub const Tests = [_]Test{
         .file_size = 13758,
         .code_size = 13666,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 156,
         .columns = 32,
     },
@@ -847,7 +881,7 @@ pub const Tests = [_]Test{
         .file_size = 14390,
         .code_size = 14298,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 164,
         .columns = 32,
     },
@@ -861,7 +895,7 @@ pub const Tests = [_]Test{
         .file_size = 14390,
         .code_size = 14298,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 164,
         .columns = 32,
     },
@@ -875,7 +909,7 @@ pub const Tests = [_]Test{
         .file_size = 14390,
         .code_size = 14298,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 164,
         .columns = 32,
     },
@@ -889,7 +923,7 @@ pub const Tests = [_]Test{
         .file_size = 14390,
         .code_size = 14298,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 164,
         .columns = 32,
     },
@@ -903,7 +937,7 @@ pub const Tests = [_]Test{
         .file_size = 14875,
         .code_size = 14783,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 164,
         .columns = 32,
     },
@@ -917,7 +951,7 @@ pub const Tests = [_]Test{
         .file_size = 14390,
         .code_size = 14298,
         .code_offset = 91,
-        .format = 3,
+        .format = TestFormat.woodmass,
         .lines = 164,
         .columns = 32,
     },
