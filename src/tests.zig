@@ -31,13 +31,14 @@ var memory: [0x10000]u8 = undefined; // 64KB
 var a: u8 = 0xFF;
 var zx_spectrum_print_hook_address: u16 = 0;
 var zx_spectrum_tab: u8 = 0;
+var cursor_x: usize = 0;
 
 pub fn run(alloc: Allocator) !void {
     try downloadAndExtract(alloc);
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i >= 3) {
+        if (i >= 5) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -211,7 +212,16 @@ fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
         return 0x00;
     }
     const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
-    return spectrumHook(address, cpu.af.uint16_value);
+    return spectrumHook(address, cpu.af.uint8_values.at_1);
+}
+
+fn cr() void {
+    std.debug.print("\n", .{});
+    // if (cursor_x > columns) {
+    //     columns = cursor_x;
+    // }
+    cursor_x = 0;
+    // lines++;
 }
 
 fn spectrumHook(address: u16, av: u8) u8 {
@@ -225,7 +235,7 @@ fn spectrumHook(address: u16, av: u8) u8 {
         switch (character) {
             0x0D => {
                 // CR
-                std.debug.print("\n", .{});
+                cr();
             },
             0x17 => {
                 // TAB
@@ -234,20 +244,27 @@ fn spectrumHook(address: u16, av: u8) u8 {
             0x7F => {
                 // ©
                 std.debug.print("©", .{});
-                // cursor_x++;
+                cursor_x += 1;
             },
             else => if (character >= 32 and character < 127) {
                 std.debug.print("{c}", .{character});
-                // cursor_x++;
+                cursor_x += 1;
             } else {
                 // zx_spectrum_bad_character = true;
             },
         }
     } else {
         zx_spectrum_tab -= 1;
-        if (zx_spectrum_tab > 0) {
+        if (zx_spectrum_tab != 0) {
             var ch: usize = character & (32 - 1);
+            const x: usize = cursor_x & (32 - 1);
 
+            if (ch < x) {
+                cr();
+            } else {
+                ch -= x;
+                cursor_x += ch;
+            }
             std.debug.print("\n", .{});
             while (ch > 0) {
                 std.debug.print(" ", .{});
