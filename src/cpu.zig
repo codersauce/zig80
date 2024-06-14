@@ -1568,6 +1568,10 @@ pub const Z80 = struct {
                 // AND C
                 self.andOp(self.getC());
             },
+            0xA2 => {
+                // AND D
+                self.andOp(self.getD());
+            },
             0xA3 => {
                 // AND E
                 self.andOp(self.getE());

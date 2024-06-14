@@ -202,7 +202,7 @@ fn spectrumTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callco
 }
 
 fn spectrumCpuHook(cpu: *Z80, address: u16) u8 {
-    return spectrumHook(address, cpu.af);
+    return spectrumHook(address, cpu.getA());
 }
 
 fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
@@ -214,13 +214,13 @@ fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
     return spectrumHook(address, cpu.af.uint16_value);
 }
 
-fn spectrumHook(address: u16, af: u16) u8 {
-    const character: u8 = @intCast(af >> 8);
+fn spectrumHook(address: u16, av: u8) u8 {
     if (address != zx_spectrum_print_hook_address) {
         return OPCODE_NOP;
     }
     // std.debug.print("** {X:0>4}  {X:0>2} ** ", .{ address, av });
 
+    const character: u8 = av;
     if (zx_spectrum_tab == 0) {
         switch (character) {
             0x0D => {
@@ -510,7 +510,7 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
     defer alloc.free(contents);
 
     cpu.load(contents, t.start_address);
-    cpu.memory[t.exit_address] = 0x76; // HALT
+    cpu.memory[t.exit_address] = OPCODE_HALT; // HALT
     cpu.pc = t.start_address;
 
     // load program into benchmark cpu memory
@@ -518,7 +518,7 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
     @memcpy(memory[t.start_address .. t.start_address + contents.len], contents);
 
     // set exit address
-    memory[t.exit_address] = 0x76; // HALT
+    memory[t.exit_address] = OPCODE_HALT; // HALT
 
     c.z80_power(bench_cpu, true);
     bench_cpu.pc.uint16_value = t.start_address;
@@ -891,16 +891,6 @@ pub const Tests = [_]Test{
         .start_address = 0x8000,
         .exit_address = 0x7003,
         .file_size = 14390,
-        // cpu.fetch_opcode = cpu_read;
-        //
-        // /* 0010: THE 'PRINT A CHARACTER' RESTART */
-        // memory[zx_spectrum_print_hook_address = 0x0010] = Z80_HOOK;
-        //
-        // /* 0D6B: THE 'CLS' COMMAND ROUTINE */
-        // memory[0x0D6B] = OPCODE_RET;
-        //
-        // /* 1601: THE 'CHAN_OPEN' SUBROUTINE */
-        // memory[0x1601] = OPCODE_RET;
         .code_size = 14298,
         .code_offset = 91,
         .format = TestFormat.woodmass,
