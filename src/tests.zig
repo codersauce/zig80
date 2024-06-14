@@ -37,7 +37,7 @@ pub fn run(alloc: Allocator) !void {
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i >= 0) {
+        if (i >= 3) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -188,28 +188,36 @@ fn cpmHook(address: u16, cv: u8, de: u16) u8 {
     return OPCODE_RET;
 }
 
-fn spectrumWrite(self: *Z80, address: u16, value: u8) void {
+fn spectrumCpuWrite(self: *Z80, address: u16, value: u8) void {
     if (address > 0x3FFF) {
         self.memory[address] = value;
     }
 }
 
-fn spectrumCpuWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+fn spectrumTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
     _ = context;
     if (address > 0x3FFF) {
         memory[address] = value;
     }
 }
 
-fn spectrumCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+fn spectrumCpuHook(cpu: *Z80, address: u16) u8 {
+    return spectrumHook(address, cpu.af);
+}
+
+fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
     if (context == null) {
         std.debug.print("context is null\n", .{});
         return 0x00;
     }
     const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
-    const character: u8 = @intCast(cpu.af.uint16_value >> 8);
+    return spectrumHook(address, cpu.af.uint16_value);
+}
+
+fn spectrumHook(address: u16, af: u16) u8 {
+    const character: u8 = @intCast(af >> 8);
     if (address != zx_spectrum_print_hook_address) {
-        return 0x00;
+        return OPCODE_NOP;
     }
     // std.debug.print("** {X:0>4}  {X:0>2} ** ", .{ address, av });
 
@@ -229,7 +237,7 @@ fn spectrumCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
                 // cursor_x++;
             },
             else => if (character >= 32 and character < 127) {
-                std.debug.print("x{c}", .{character});
+                std.debug.print("{c}", .{character});
                 // cursor_x++;
             } else {
                 // zx_spectrum_bad_character = true;
@@ -248,7 +256,7 @@ fn spectrumCpuHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
         }
     }
 
-    return 0x00;
+    return OPCODE_RET;
 }
 
 fn cpuHook(cpu: *Z80, address: u16) u8 {
@@ -539,31 +547,21 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
         // cpu.im = 1;
         // cpu.i = 0x3F;
         zx_spectrum_print_hook_address = 0x0010;
-        bench_cpu.write = spectrumCpuWrite;
-        bench_cpu.hook = spectrumCpuHook;
+        bench_cpu.write = spectrumTheirWrite;
+        bench_cpu.hook = spectrumTheirHook;
         bench_cpu.im = 1;
         bench_cpu.i = 0x3F;
         memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)
-        memory[0x0D6B] = 0xC9; // ret
-        memory[0x1601] = 0xC9; // ret
+        memory[0x0D6B] = OPCODE_RET; // ret
+        memory[0x1601] = OPCODE_RET; // ret
 
-        cpu.write = spectrumWrite;
-        cpu.hook = cpuHook;
+        cpu.hook = spectrumCpuHook;
+        cpu.write = spectrumCpuWrite;
         cpu.im = 1;
         cpu.i = 0x3F;
         cpu.memory[zx_spectrum_print_hook_address] = 0x64; // Hook (print?)
         cpu.memory[0x0D6B] = 0xC9; // ret
         cpu.memory[0x1601] = 0xC9; // ret
-        // cpu.fetch_opcode = cpu_read;
-        //
-        // /* 0010: THE 'PRINT A CHARACTER' RESTART */
-        // memory[zx_spectrum_print_hook_address = 0x0010] = Z80_HOOK;
-        //
-        // /* 0D6B: THE 'CLS' COMMAND ROUTINE */
-        // memory[0x0D6B] = OPCODE_RET;
-        //
-        // /* 1601: THE 'CHAN_OPEN' SUBROUTINE */
-        // memory[0x1601] = OPCODE_RET;
     }
 }
 
@@ -893,6 +891,16 @@ pub const Tests = [_]Test{
         .start_address = 0x8000,
         .exit_address = 0x7003,
         .file_size = 14390,
+        // cpu.fetch_opcode = cpu_read;
+        //
+        // /* 0010: THE 'PRINT A CHARACTER' RESTART */
+        // memory[zx_spectrum_print_hook_address = 0x0010] = Z80_HOOK;
+        //
+        // /* 0D6B: THE 'CLS' COMMAND ROUTINE */
+        // memory[0x0D6B] = OPCODE_RET;
+        //
+        // /* 1601: THE 'CHAN_OPEN' SUBROUTINE */
+        // memory[0x1601] = OPCODE_RET;
         .code_size = 14298,
         .code_offset = 91,
         .format = TestFormat.woodmass,

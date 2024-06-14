@@ -478,6 +478,12 @@ pub const Z80 = struct {
         self.cycles += 15;
     }
 
+    pub fn sbc8(self: *Z80, v: u8) void {
+        self.setA(self.sub8(self.getA(), v, self.isCarry()));
+        self.cycles += 4;
+    }
+
+    // H(0x9C, a = sub8(a, IHI, cf)) H(0x9D, a = sub8(a, ILO, cf))
     pub fn sbc(self: *Z80, v1: u8, v2: u8) void {
         const carry: u8 = if (self.isCarry()) 1 else 0;
         const result = v1 -% v2 -% carry;
@@ -505,7 +511,7 @@ pub const Z80 = struct {
         flag.setSign(result & 0x80 == 0x80);
         flag.setZero(result == 0);
         flag.setHalfCarry((v1 & 0x0F) < (v2 & 0x0F) + carry);
-        flag.setParityOverflow(result == 0x7F);
+        flag.setParityOverflow(@as(u16, @intCast(result ^ v1 ^ v2)) >> 8 & 0x80 != 0);
         flag.setSubtract(true);
         const carry_out = @as(u16, v1) < @as(u16, v2) + @as(u16, carry);
         flag.setCarry(carry_out);
@@ -695,6 +701,15 @@ pub const Z80 = struct {
         return opcode;
     }
 
+    pub fn calcJump(self: *Z80, byte: u8) void {
+        const offset: i8 = @bitCast(byte);
+        if (offset > 0) {
+            self.pc +%= @intCast(offset);
+        } else {
+            self.pc -%= @as(u16, @intCast(-@as(i16, @intCast(offset))));
+        }
+    }
+
     pub fn peekByte(self: *Z80) u8 {
         return self.memory[self.pc];
     }
@@ -704,6 +719,10 @@ pub const Z80 = struct {
         const byte = self.memory[self.pc];
         self.pc +%= 1;
         return byte;
+    }
+
+    fn fetchByteAsI8(self: *Z80) i8 {
+        return @bitCast(self.fetchByte());
     }
 
     // Fetch the next word (2 bytes) from memory
@@ -926,6 +945,7 @@ pub const Z80 = struct {
             },
             0x17 => {
                 // RLA
+                // H(0x17, t2=cf;cf=a>>7;a=(a<<1)|t2;nf=hf=0;xyf1(a))
                 var carry: u8 = undefined;
                 if (self.isCarry()) {
                     carry = 1;
@@ -943,6 +963,11 @@ pub const Z80 = struct {
                 self.setF(flag.get());
 
                 self.cycles += 4;
+            },
+            0x18 => {
+                // JR n
+                self.calcJump(self.fetchByte());
+                self.cycles += 12;
             },
             0x19 => {
                 // ADD HL, DE
@@ -1056,23 +1081,23 @@ pub const Z80 = struct {
                 switch (t) {
                     1 => {
                         if (flags.isSubtract()) {
-                            self.setA(self.getA() + 0xFA);
+                            self.setA(self.getA() +% 0xFA);
                         } else {
-                            self.setA(self.getA() + 0x06);
+                            self.setA(self.getA() +% 0x06);
                         }
                     },
                     2 => {
                         if (flags.isSubtract()) {
-                            self.setA(self.getA() + 0xA0);
+                            self.setA(self.getA() +% 0xA0);
                         } else {
-                            self.setA(self.getA() + 0x60);
+                            self.setA(self.getA() +% 0x60);
                         }
                     },
                     3 => {
                         if (flags.isSubtract()) {
-                            self.setA(self.getA() + 0x9A);
+                            self.setA(self.getA() +% 0x9A);
                         } else {
-                            self.setA(self.getA() + 0x66);
+                            self.setA(self.getA() +% 0x66);
                         }
                     },
                     else => {},
@@ -1088,9 +1113,8 @@ pub const Z80 = struct {
             0x28 => {
                 // JR Z, n
                 const offset = self.fetchByte();
-
                 if (self.isZero()) {
-                    self.pc += offset;
+                    self.calcJump(offset);
                     self.cycles += 12;
                 } else {
                     self.cycles += 7;
@@ -1492,6 +1516,10 @@ pub const Z80 = struct {
                 // ADD A, E
                 self.add(self.getA(), self.getE());
             },
+            0x86 => {
+                // ADD A, (HL)
+                self.add(self.getA(), self.memory[self.hl]);
+            },
             0x87 => {
                 // ADD A, A
                 self.add(self.getA(), self.getA());
@@ -1512,6 +1540,10 @@ pub const Z80 = struct {
                 // ADC A, A
                 self.adc(self.getA());
             },
+            0x91 => {
+                // SUB C
+                self.sub(self.getC());
+            },
             0x95 => {
                 // SUB L
                 self.sub(self.getL());
@@ -1522,11 +1554,11 @@ pub const Z80 = struct {
             },
             0x9C => {
                 // SBC A, H
-                self.sbc(self.getA(), self.getH());
+                self.sbc8(self.getH());
             },
             0x9D => {
                 // SBC A, L
-                self.sbc(self.getA(), self.getH());
+                self.sbc8(self.getL());
             },
             0xA0 => {
                 // AND B
@@ -1764,12 +1796,7 @@ pub const Z80 = struct {
             },
             0xD7 => {
                 // RST 10H
-                self.decSP();
-                // self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
-                self.decSP();
-                // self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
-                self.pc = 0x10;
-                self.cycles += 11;
+                self.rst(0x10);
             },
             0xD8 => {
                 // RET C
