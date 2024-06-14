@@ -865,17 +865,8 @@ pub const Z80 = struct {
             },
             0x09 => {
                 // ADD HL, BC
-                const sum: u32 = self.hl +% self.bc;
-                self.hl +%= self.bc;
-
-                if (sum > 0xFFFF) {
-                    self.setF(self.getF() | 0x10);
-                } else {
-                    self.setF(self.getF() & 0xEF);
-                }
-
+                self.hl = self.add16(self.hl, self.bc);
                 self.cycles += 11;
-                self.pc +%= 1;
             },
             0x0A => {
                 // LD A, (BC)
@@ -1548,6 +1539,10 @@ pub const Z80 = struct {
                 // SUB L
                 self.sub(self.getL());
             },
+            0x97 => {
+                // SUB A
+                self.sub(self.getA());
+            },
             0x9A => {
                 // SBC A, D
                 self.sbc(self.getA(), self.getD());
@@ -1595,6 +1590,10 @@ pub const Z80 = struct {
             0xA9 => {
                 // XOR C
                 self.xorOp(self.getC());
+            },
+            0xAD => {
+                // XOR L
+                self.xorOp(self.getL());
             },
             0xAE => {
                 // XOR (HL)
