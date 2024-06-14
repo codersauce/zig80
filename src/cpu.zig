@@ -441,6 +441,7 @@ pub const Z80 = struct {
         const q: u16 = self.sub16n(self.hl, v, self.isCarry());
         var flags = self.getFlag();
         flags.setZeroSign16(q);
+        self.setF(flags.get());
         self.hl = q;
         self.cycles += 15;
     }
