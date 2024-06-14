@@ -846,8 +846,8 @@ pub const Z80 = struct {
             },
             0x09 => {
                 // ADD HL, BC
-                const sum: u32 = self.hl + self.bc;
-                self.hl +|= self.bc;
+                const sum: u32 = self.hl +% self.bc;
+                self.hl +%= self.bc;
 
                 if (sum > 0xFFFF) {
                     self.setF(self.getF() | 0x10);
