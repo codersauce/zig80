@@ -265,6 +265,11 @@ pub const Z80 = struct {
         self.cycles += 4;
     }
 
+    pub fn addn(self: *Z80, v: u8) void {
+        self.setA(self.add8(self.getA(), v, self.isCarry()));
+        self.cycles += 4;
+    }
+
     // SI u8 add8(u8 a, u8 b, bv cy) {
     //   u8 res = a + b + cy;
     //   hf = carry(4, a, b, cy);
@@ -518,6 +523,11 @@ pub const Z80 = struct {
         self.setF(flag.get());
 
         self.setA(@as(u8, @intCast(result & 0xFF)));
+        self.cycles += 4;
+    }
+
+    pub fn subn(self: *Z80, v: u8) void {
+        self.setA(self.sub8(self.getA(), v, self.isCarry()));
         self.cycles += 4;
     }
 
@@ -1340,6 +1350,11 @@ pub const Z80 = struct {
                 self.setE(self.memory[self.hl]);
                 self.cycles += 7;
             },
+            0x5F => {
+                // LD E, A
+                self.setE(self.getA());
+                self.cycles += 4;
+            },
             0x60 => {
                 // LD H, B
                 self.setH(self.getB());
@@ -1502,6 +1517,14 @@ pub const Z80 = struct {
                 // ADD A, E
                 self.add(self.getA(), self.getE());
             },
+            0x84 => {
+                // ADD A, H
+                self.add(self.getA(), self.getH());
+            },
+            0x85 => {
+                // ADD A, L
+                self.add(self.getA(), self.getL());
+            },
             0x86 => {
                 // ADD A, (HL)
                 self.add(self.getA(), self.memory[self.hl]);
@@ -1522,29 +1545,73 @@ pub const Z80 = struct {
                 // ADC A, D
                 self.adc(self.getD());
             },
+            0x8B => {
+                // ADC A, E
+                self.adc(self.getE());
+            },
             0x8C => {
                 // ADC A, H
                 self.adc(self.getH());
+            },
+            0x8D => {
+                // ADC A, L
+                self.adc(self.getL());
+            },
+            0x8E => {
+                // ADC A, (HL)
+                self.adc(self.memory[self.hl]);
             },
             0x8F => {
                 // ADC A, A
                 self.adc(self.getA());
             },
+            0x90 => {
+                // SUB B
+                self.sub(self.getB());
+            },
             0x91 => {
                 // SUB C
                 self.sub(self.getC());
+            },
+            0x92 => {
+                // SUB D
+                self.sub(self.getD());
+            },
+            0x93 => {
+                // SUB E
+                self.sub(self.getE());
+            },
+            0x94 => {
+                // SUB H
+                self.sub(self.getH());
             },
             0x95 => {
                 // SUB L
                 self.sub(self.getL());
             },
+            0x96 => {
+                // SUB (HL)
+                self.sub(self.memory[self.hl]);
+            },
             0x97 => {
                 // SUB A
                 self.sub(self.getA());
             },
+            0x98 => {
+                // SBC A, B
+                self.sbc(self.getA(), self.getB());
+            },
+            0x99 => {
+                // SBC A, C
+                self.sbc(self.getA(), self.getC());
+            },
             0x9A => {
                 // SBC A, D
                 self.sbc(self.getA(), self.getD());
+            },
+            0x9B => {
+                // SBC A, E
+                self.sbc(self.getA(), self.getE());
             },
             0x9C => {
                 // SBC A, H
@@ -1553,6 +1620,14 @@ pub const Z80 = struct {
             0x9D => {
                 // SBC A, L
                 self.sbc8(self.getL());
+            },
+            0x9E => {
+                // SBC A, (HL)
+                self.sbc8(self.memory[self.hl]);
+            },
+            0x9F => {
+                // SBC A, A
+                self.sbc8(self.getA());
             },
             0xA0 => {
                 // AND B
@@ -1582,6 +1657,10 @@ pub const Z80 = struct {
                 // AND A
                 self.andOp(self.getA());
             },
+            0xA6 => {
+                // AND (HL)
+                self.andOp(self.memory[self.hl]);
+            },
             0xA8 => {
                 // XOR B
                 self.xorOp(self.getB());
@@ -1589,6 +1668,14 @@ pub const Z80 = struct {
             0xA9 => {
                 // XOR C
                 self.xorOp(self.getC());
+            },
+            0xAA => {
+                // XOR D
+                self.xorOp(self.getD());
+            },
+            0xAB => {
+                // XOR E
+                self.xorOp(self.getE());
             },
             0xAC => {
                 // XOR H
@@ -1614,6 +1701,22 @@ pub const Z80 = struct {
                 // OR C
                 self.orOp(self.getC());
             },
+            0xB2 => {
+                // OR D
+                self.orOp(self.getD());
+            },
+            0xB3 => {
+                // OR E
+                self.orOp(self.getE());
+            },
+            0xB4 => {
+                // OR H
+                self.orOp(self.getH());
+            },
+            0xB5 => {
+                // OR L
+                self.orOp(self.getL());
+            },
             0xB6 => {
                 // OR (HL)
                 self.orOp(self.memory[self.hl]);
@@ -1629,6 +1732,14 @@ pub const Z80 = struct {
             0xB9 => {
                 // CP C
                 self.cp(self.getC());
+            },
+            0xBA => {
+                // CP D
+                self.cp(self.getD());
+            },
+            0xBB => {
+                // CP E
+                self.cp(self.getE());
             },
             0xBC => {
                 // CP H
@@ -1703,6 +1814,11 @@ pub const Z80 = struct {
                 self.decSP();
                 self.writeByte(self.sp, self.getC());
                 self.cycles += 11;
+            },
+            0xC6 => {
+                // ADD A, n
+                const n = self.fetchByte();
+                self.add(self.getA(), n);
             },
             0xC8 => {
                 // RET Z
@@ -1861,6 +1977,11 @@ pub const Z80 = struct {
                     _ = ix_instruction.?(self);
                     // std.debug.print("IX instruction: {any} {any}\n", .{ res, ix_instruction });
                 }
+            },
+            0xDE => {
+                // SBC A, n
+                const n = self.fetchByte();
+                self.sbc8(n);
             },
             0xE1 => {
                 // POP HL
@@ -2063,6 +2184,10 @@ pub const Z80 = struct {
                 // AND n
                 self.andOp(self.fetchByte());
             },
+            0xEE => {
+                // XOR n
+                self.xorOp(self.fetchByte());
+            },
             0xF0 => {
                 // RET P
                 if (!self.isSign()) {
@@ -2113,6 +2238,10 @@ pub const Z80 = struct {
                 self.decSP();
                 self.writeByte(self.sp, self.getF());
                 self.cycles += 11;
+            },
+            0xF6 => {
+                // OR n
+                self.orOp(self.fetchByte());
             },
             0xF8 => {
                 // RET M
@@ -2471,7 +2600,7 @@ pub const Flag = struct {
     }
 };
 
-const illegal = null;
+const _______ = null;
 
 fn push_iy(cpu: *Z80) void {
     // std.debug.print("pc = {X:0>4}\n", .{self.pc});
@@ -2537,9 +2666,21 @@ fn addixbc(self: *Z80) void {
     self.cycles += 15;
 }
 
+fn addiybc(self: *Z80) void {
+    // 0xFD 0x09 ADD IY, BC
+    self.iy = self.add16n(self.iy, self.bc, self.isCarry());
+    self.cycles += 15;
+}
+
 fn addixde(self: *Z80) void {
     // 0xDD 0x19 ADD IX, DE
     self.ix = self.add16n(self.ix, self.de, self.isCarry());
+    self.cycles += 15;
+}
+
+fn addiyde(self: *Z80) void {
+    // 0xFD 0x19 ADD IY, DE
+    self.iy = self.add16n(self.iy, self.de, self.isCarry());
     self.cycles += 15;
 }
 
@@ -2549,49 +2690,222 @@ fn addixix(self: *Z80) void {
     self.cycles += 15;
 }
 
+fn addiyiy(self: *Z80) void {
+    // 0xFD 0x29 ADD IY, IY
+    self.iy = self.add16n(self.iy, self.iy, self.isCarry());
+    self.cycles += 15;
+}
+
 fn addixsp(self: *Z80) void {
     // 0xDD 0x39 ADD IX, SP
     self.ix = self.add16n(self.ix, self.sp, self.isCarry());
     self.cycles += 15;
 }
 
+fn addiysp(self: *Z80) void {
+    // 0xFD 0x39 ADD IY, SP
+    self.iy = self.add16n(self.iy, self.sp, self.isCarry());
+    self.cycles += 15;
+}
+
+fn addaiyh(self: *Z80) void {
+    // 0xFD 0x84 ADD A, IYH
+    self.addn(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn addaixh(self: *Z80) void {
+    // 0xDD 0x84 ADD A, IXH
+    self.addn(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn addaiyl(self: *Z80) void {
+    // 0xFD 0x85 ADD A, IYL
+    self.addn(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn addaixl(self: *Z80) void {
+    // 0xDD 0x85 ADD A, IXL
+    self.addn(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn adcaiyh(self: *Z80) void {
+    // 0xFD 0x8C ADC A, IYH
+    self.adc(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn adcaixh(self: *Z80) void {
+    // 0xDD 0x8C ADC A, IXH
+    self.adc(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn adcaiyl(self: *Z80) void {
+    // 0xFD 0x8D ADC A, IYL
+    self.adc(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn adcaixl(self: *Z80) void {
+    // 0xDD 0x8D ADC A, IXL
+    self.adc(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn sub_iyh(self: *Z80) void {
+    // 0xFD 0x94 SUB IYH
+    self.subn(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn sub_ixh(self: *Z80) void {
+    // 0xDD 0x94 SUB IXH
+    self.subn(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn sub_iyl(self: *Z80) void {
+    // 0xFD 0x95 SUB IYL
+    self.subn(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn sub_ixl(self: *Z80) void {
+    // 0xDD 0x95 SUB IXL
+    self.subn(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn sbcaiyh(self: *Z80) void {
+    // 0xFD 0x9C SBC A, IYH
+    self.sbc8(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn sbcaixh(self: *Z80) void {
+    // 0xDD 0x9C SBC A, IXH
+    self.sbc8(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn sbcaiyl(self: *Z80) void {
+    // 0xFD 0x9D SBC A, IYL
+    self.sbc8(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn sbcaixl(self: *Z80) void {
+    // 0xDD 0x9D SBC A, IXL
+    self.sbc8(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn and_iyh(self: *Z80) void {
+    // 0xFD 0xA4 AND IYH
+    self.andOp(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn and_ixh(self: *Z80) void {
+    // 0xDD 0xA4 AND IXH
+    self.andOp(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn and_iyl(self: *Z80) void {
+    // 0xFD 0xA5 AND IYL
+    self.andOp(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn and_ixl(self: *Z80) void {
+    // 0xDD 0xA5 AND IXL
+    self.andOp(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn xor_ixl(self: *Z80) void {
+    // 0xDD 0xAC XOR IXL
+    self.xorOp(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn xor_iyl(self: *Z80) void {
+    // 0xFD 0xAD XOR IYL
+    self.xorOp(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn xor_ixh(self: *Z80) void {
+    // 0xDD 0xAC XOR IXH
+    self.xorOp(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn xor_iyh(self: *Z80) void {
+    // 0xFD 0xAD XOR IYH
+    self.xorOp(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn ori__xh(self: *Z80) void {
+    // 0xDD 0xB4 OR IXH
+    self.orOp(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn or__iyh(self: *Z80) void {
+    // 0xFD 0xB4 OR IYH
+    self.orOp(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn ori__xl(self: *Z80) void {
+    // 0xDD 0xB5 OR IXL
+    self.orOp(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
+fn or__iyl(self: *Z80) void {
+    // 0xFD 0xB5 OR IYL
+    self.orOp(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn cp__iyh(self: *Z80) void {
+    // 0xFD 0xBC CP IYH
+    self.cp(@as(u8, @intCast(self.iy >> 8)));
+}
+
+fn cp__ixh(self: *Z80) void {
+    // 0xDD 0xBC CP IXH
+    self.cp(@as(u8, @intCast(self.ix >> 8)));
+}
+
+fn cp__iyl(self: *Z80) void {
+    // 0xFD 0xBD CP IYL
+    self.cp(@as(u8, @intCast(self.iy & 0xFF)));
+}
+
+fn cp__ixl(self: *Z80) void {
+    // 0xDD 0xBD CP IXL
+    self.cp(@as(u8, @intCast(self.ix & 0xFF)));
+}
+
 // 0xDD
 const IX_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixbc, illegal, illegal, illegal, illegal, illegal, illegal, // 0
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixde, illegal, illegal, illegal, illegal, illegal, illegal, // 1
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixix, illegal, illegal, illegal, illegal, illegal, illegal, // 2
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixsp, illegal, illegal, illegal, illegal, illegal, illegal, // 3
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 4
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 5
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 6
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 7
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 8
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 9
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // A
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // B
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // C
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // D
-    illegal, pop__ix, illegal, illegal, illegal, push_ix, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // E
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // F
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, addixbc, _______, _______, _______, _______, _______, _______, // 0
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, addixde, _______, _______, _______, _______, _______, _______, // 1
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, addixix, _______, _______, _______, _______, _______, _______, // 2
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, addixsp, _______, _______, _______, _______, _______, _______, // 3
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 4
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 5
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 6
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 7
+    _______, _______, _______, _______, addaixh, addaixl, _______, _______, _______, _______, _______, _______, adcaixh, adcaixl, _______, _______, // 8
+    _______, _______, _______, _______, sub_ixh, sub_ixl, _______, _______, _______, _______, _______, _______, sbcaixh, sbcaixl, _______, _______, // 9
+    _______, _______, _______, _______, and_ixh, and_ixl, _______, _______, _______, _______, _______, _______, xor_ixh, xor_ixl, _______, _______, // A
+    _______, _______, _______, _______, ori__xh, ori__xl, _______, _______, _______, _______, _______, _______, cp__ixh, cp__ixl, _______, _______, // B
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
+    _______, pop__ix, _______, _______, _______, push_ix, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // F
 };
 
+// 0xFD
 const IY_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 0
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 1
-    illegal, ldiy_nn, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 2
-    illegal, illegal, illegal, illegal, illegal, illegal, ldiyd_n, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 3
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 4
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 5
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, ldiyl_b, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 6
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 7
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 8
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 9
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // A
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // B
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // C
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // D
-    illegal, pop__iy, illegal, illegal, illegal, push_iy, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // E
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // F
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, addiybc, _______, _______, _______, _______, _______, _______, // 0
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, addiyde, _______, _______, _______, _______, _______, _______, // 1
+    _______, ldiy_nn, _______, _______, _______, _______, _______, _______, _______, addiyiy, _______, _______, _______, _______, _______, _______, // 2
+    _______, _______, _______, _______, _______, _______, ldiyd_n, _______, _______, addiysp, _______, _______, _______, _______, _______, _______, // 3
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 4
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 5
+    _______, _______, _______, _______, _______, _______, _______, _______, ldiyl_b, _______, _______, _______, _______, _______, _______, _______, // 6
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 7
+    _______, _______, _______, _______, addaiyh, addaiyl, _______, _______, _______, _______, _______, _______, adcaiyh, adcaixl, _______, _______, // 8
+    _______, _______, _______, _______, sub_iyh, sub_iyl, _______, _______, _______, _______, _______, _______, sbcaiyh, sbcaiyl, _______, _______, // 9
+    _______, _______, _______, _______, and_ixh, and_ixl, _______, _______, _______, _______, _______, _______, xor_iyh, xor_iyl, _______, _______, // A
+    _______, _______, _______, _______, or__iyh, or__iyl, _______, _______, _______, _______, _______, _______, cp__iyh, cp__iyl, _______, _______, // B
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
+    _______, pop__iy, _______, _______, _______, push_iy, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // F
 };
