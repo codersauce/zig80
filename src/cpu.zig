@@ -692,13 +692,7 @@ pub const Z80 = struct {
 
     pub fn fetchOpcode(self: *Z80) u8 {
         self.incR();
-        var opcode = self.fetchByte();
-        if (self.pending_opcode != null) {
-            opcode = self.pending_opcode.?;
-            self.pending_opcode = null;
-        }
-        // std.debug.print("{X:0>2} ", .{opcode});
-        return opcode;
+        return self.fetchByte();
     }
 
     pub fn calcJump(self: *Z80, byte: u8) void {
@@ -791,21 +785,13 @@ pub const Z80 = struct {
         return flag.isCarry();
     }
 
-    pub fn getTrapOrOpcode(self: *Z80) u8 {
-        if (self.peekByte() == 0x64 and self.hook != null) {
-            const opcode = self.hook.?(self, self.pc);
-            // if (opcode != 0x00) {
-            // std.debug.print("trap: {X:0>2}\n", .{opcode});
-            // }
-            self.pending_opcode = opcode;
-        }
-        return self.fetchOpcode();
-    }
-
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
-        // std.debug.print("[cpu  ] pc={0X:0>4} opcode={1X:0>2}\n", .{ self.pc, self.peekByte() });
-        switch (self.getTrapOrOpcode()) {
+        self.executeOpcode(self.fetchOpcode());
+    }
+
+    pub fn executeOpcode(self: *Z80, opcode: u8) void {
+        switch (opcode) {
             0x00 => {
                 // NOP
                 self.cycles += 4;
@@ -1138,6 +1124,11 @@ pub const Z80 = struct {
                 self.setL(self.dec(self.getL()));
                 self.cycles += 4;
             },
+            0x2E => {
+                // LD L, n
+                self.setL(self.fetchByte());
+                self.cycles += 7;
+            },
             0x2F => {
                 // CPL
                 self.setA(~self.getA());
@@ -1371,8 +1362,12 @@ pub const Z80 = struct {
             },
             0x64 => {
                 // LD H, H
-                self.setH(self.getH());
-                self.cycles += 4;
+                if (self.hook != null) {
+                    self.executeOpcode(self.hook.?(self, self.pc - 1));
+                } else {
+                    self.setH(self.getH());
+                    self.cycles += 4;
+                }
             },
             0x65 => {
                 // LD H, L
@@ -1523,6 +1518,10 @@ pub const Z80 = struct {
                 // ADC A, C
                 self.adc(self.getC());
             },
+            0x8A => {
+                // ADC A, D
+                self.adc(self.getD());
+            },
             0x8C => {
                 // ADC A, H
                 self.adc(self.getH());
@@ -1590,6 +1589,10 @@ pub const Z80 = struct {
             0xA9 => {
                 // XOR C
                 self.xorOp(self.getC());
+            },
+            0xAC => {
+                // XOR H
+                self.xorOp(self.getH());
             },
             0xAD => {
                 // XOR L
@@ -2110,6 +2113,19 @@ pub const Z80 = struct {
                 self.writeByte(self.sp, self.getF());
                 self.cycles += 11;
             },
+            0xF8 => {
+                // RET M
+                if (self.isSign()) {
+                    const lo: u16 = @intCast(self.memory[self.sp]);
+                    const hi: u16 = @intCast(self.memory[self.sp + 1]);
+                    self.incSP();
+                    self.incSP();
+                    self.pc = hi << 8 | lo;
+                    self.cycles += 11;
+                } else {
+                    self.cycles += 5;
+                }
+            },
             0xF9 => {
                 // LD SP, HL
                 self.setSP(self.hl);
@@ -2499,6 +2515,19 @@ fn ldiyl_b(self: *Z80) void {
     self.cycles += 8;
 }
 
+fn ldiyd_n(self: *Z80) void {
+    // 0xFD 0x36 n LD (IY+d), n
+    const d = self.fetchByte();
+    self.writeByte(self.iy + d, self.fetchByte());
+    self.cycles += 19;
+}
+
+fn ldiy_nn(self: *Z80) void {
+    // 0xFD 0x21 LD IY, nn
+    self.iy = self.fetchWord();
+    self.cycles += 14;
+}
+
 // 0xDD
 const IX_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
@@ -2524,8 +2553,8 @@ const IY_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 0
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 1
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 2
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 3
+    illegal, ldiy_nn, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 2
+    illegal, illegal, illegal, illegal, illegal, illegal, ldiyd_n, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 3
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 4
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 5
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, ldiyl_b, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 6

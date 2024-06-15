@@ -38,7 +38,7 @@ pub fn run(alloc: Allocator) !void {
 
     var cpu = Z80.init();
     for (Tests, 0..) |t, i| {
-        if (i >= 5) {
+        if (i >= 1) {
             try runTest(alloc, &cpu, t);
         }
     }
@@ -98,7 +98,6 @@ fn cpuHalt(context: ?*anyopaque, state: u8) callconv(.C) void {
 fn cpuRead(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
     _ = context;
     const opcode = memory[address];
-    // std.debug.print("[bench] pc={0X:0>4} opcode={1X:0>2}\n", .{ address, opcode });
     return opcode;
 }
 
@@ -145,7 +144,7 @@ fn printTheirState(cpu: *c.Z80) void {
 
 fn cpmHook(address: u16, cv: u8, de: u16) u8 {
     if (address != 5) {
-        return 0x00;
+        return OPCODE_NOP;
     }
 
     // std.debug.print("hook: {x}\n", .{address});
@@ -203,6 +202,7 @@ fn spectrumTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callco
 }
 
 fn spectrumCpuHook(cpu: *Z80, address: u16) u8 {
+    // std.debug.print("[ours  ] pc: {X:0>4} address: {X:0>4} a={X:0>2}\n", .{ cpu.pc, address, cpu.getA() });
     return spectrumHook(address, cpu.getA());
 }
 
@@ -212,6 +212,7 @@ fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
         return 0x00;
     }
     const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
+    // std.debug.print("[theirs] pc: {X:0>4} address: {X:0>4} a={X:0>2}\n", .{ cpu.pc.uint16_value, address, cpu.af.uint8_values.at_1 });
     return spectrumHook(address, cpu.af.uint8_values.at_1);
 }
 
@@ -557,7 +558,7 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
         cpu.memory[0] = 0x76; // HALT
         cpu.memory[5] = 0x64; // print
     } else {
-        std.debug.print("ZX Spectrum Format\n", .{});
+        std.debug.print("ZX Spectrum Format ({any})\n", .{t.format});
         // ZX Spectrum Format
         // cpu.write = zx_spectrum_cpu_write;
         // cpu.hook = zx_spectrum_cpu_hook;
