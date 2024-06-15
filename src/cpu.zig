@@ -2155,6 +2155,7 @@ pub const Z80 = struct {
                 // IY Extended Instructions
                 const iy_instruction = IY_TABLE[self.peekByte()];
                 if (iy_instruction == null) {
+                    std.debug.print("Unhandled 0xFD {X:0>2}\n", .{self.peekByte()});
                     self.cycles += 4;
                     self.execute();
                 } else {
@@ -2257,6 +2258,7 @@ pub const Z80 = struct {
     }
 
     pub fn load(self: *Z80, program: []const u8, start_address: u16) void {
+        @memset(&self.memory, 0);
         @memcpy(self.memory[start_address .. start_address + program.len], program);
     }
 

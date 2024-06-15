@@ -527,13 +527,14 @@ fn loadTest(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
     const contents = try loadTestFile(alloc, t);
     defer alloc.free(contents);
 
-    cpu.load(contents, t.start_address);
+    const start_address = t.start_address & 0xFF00;
+    cpu.load(contents, start_address);
     cpu.memory[t.exit_address] = OPCODE_HALT; // HALT
     cpu.pc = t.start_address;
 
     // load program into benchmark cpu memory
     @memset(&memory, 0);
-    @memcpy(memory[t.start_address .. t.start_address + contents.len], contents);
+    @memcpy(memory[start_address .. start_address + contents.len], contents);
 
     // set exit address
     memory[t.exit_address] = OPCODE_HALT; // HALT
@@ -595,6 +596,7 @@ fn loadTestFile(alloc: Allocator, t: Test) ![]const u8 {
         return TestError.FileSizeMismatch;
     }
 
+    try file.seekBy(t.code_offset);
     const contents = try file.readToEndAlloc(alloc, stat.size);
     return contents;
 }
