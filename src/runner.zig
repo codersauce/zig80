@@ -4,6 +4,9 @@ const Allocator = std.mem.Allocator;
 
 const Z80 = @import("cpu.zig").Z80;
 
+// try runner.runTest(alloc, "SingleStepTests-z80/v1/0a.json");
+// std.debug.print("SingleStepTests-z80/v1/0a.json passed\n", .{});
+
 const RamEntry = struct {
     address: u16,
     value: u8,

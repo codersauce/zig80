@@ -1,4 +1,5 @@
 const std = @import("std");
+const cli = @import("cli.zig");
 const runner = @import("runner.zig");
 const tests = @import("tests.zig");
 
@@ -8,8 +9,24 @@ pub fn main() !void {
 
     const alloc = gpa.allocator();
 
-    // try runner.runTest(alloc, "SingleStepTests-z80/v1/0a.json");
-    // std.debug.print("SingleStepTests-z80/v1/0a.json passed\n", .{});
+    const args = try std.process.argsAlloc(alloc);
+    defer std.process.argsFree(alloc, args);
 
-    try tests.run(alloc);
+    var options = Options.init();
+    try cli.parse(args, Options, &options);
+
+    std.debug.print("Running {any}\n", .{options});
+
+    try tests.run(alloc, options.@"test");
 }
+
+const Options = struct {
+    /// Number of the test to run
+    @"test": ?u32,
+
+    pub fn init() Options {
+        return Options{
+            .@"test" = null,
+        };
+    }
+};

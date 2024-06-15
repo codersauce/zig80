@@ -33,10 +33,16 @@ var zx_spectrum_print_hook_address: u16 = 0;
 var zx_spectrum_tab: u8 = 0;
 var cursor_x: usize = 0;
 
-pub fn run(alloc: Allocator) !void {
+pub fn run(alloc: Allocator, test_num: ?u32) !void {
     try downloadAndExtract(alloc);
 
     var cpu = Z80.init();
+    if (test_num != null) {
+        std.debug.print("running test: {d}\n", .{test_num.? - 1});
+        try runTest(alloc, &cpu, Tests[test_num.? - 1]);
+        return;
+    }
+
     for (Tests, 0..) |t, i| {
         if (i >= 1) {
             try runTest(alloc, &cpu, t);
