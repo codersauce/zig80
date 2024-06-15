@@ -2868,6 +2868,111 @@ fn cp__ixl(self: *Z80) void {
     self.cp(@as(u8, @intCast(self.ix & 0xFF)));
 }
 
+fn addaiyd(self: *Z80) void {
+    // 0xFD 0x86 ADD A, (IY+d)
+    const d = self.fetchByte();
+    self.addn(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn addaixd(self: *Z80) void {
+    // 0xDD 0x86 ADD A, (IX+d)
+    const d = self.fetchByte();
+    self.addn(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
+fn adcaiyd(self: *Z80) void {
+    // 0xFD 0x8E ADC A, (IY+d)
+    const d = self.fetchByte();
+    self.adc(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn adcaixd(self: *Z80) void {
+    // 0xDD 0x8E ADC A, (IX+d)
+    const d = self.fetchByte();
+    self.adc(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
+fn subaiyd(self: *Z80) void {
+    // 0xFD 0x96 SUB A, (IY+d)
+    const d = self.fetchByte();
+    self.subn(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn subaixd(self: *Z80) void {
+    // 0xDD 0x96 SUB A, (IX+d)
+    const d = self.fetchByte();
+    self.subn(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
+fn sbcaiyd(self: *Z80) void {
+    // 0xFD 0x9E SBC A, (IY+d)
+    const d = self.fetchByte();
+    self.sbc8(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn and_iyd(self: *Z80) void {
+    // 0xFD 0xA6 AND (IY+d)
+    const d = self.fetchByte();
+    self.andOp(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn and_ixd(self: *Z80) void {
+    // 0xDD 0xA6 AND (IX+d)
+    const d = self.fetchByte();
+    self.andOp(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
+fn xor_iyd(self: *Z80) void {
+    // 0xFD 0xAE XOR (IY+d)
+    const d = self.fetchByte();
+    self.xorOp(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn xor_ixd(self: *Z80) void {
+    // 0xDD 0xAE XOR (IX+d)
+    const d = self.fetchByte();
+    self.xorOp(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
+fn or__iyd(self: *Z80) void {
+    // 0xFD 0xB6 OR (IY+d)
+    const d = self.fetchByte();
+    self.orOp(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn or__ixd(self: *Z80) void {
+    // 0xDD 0xB6 OR (IX+d)
+    const d = self.fetchByte();
+    self.orOp(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
+fn cp__iyd(self: *Z80) void {
+    // 0xFD 0xBE CP (IY+d)
+    const d = self.fetchByte();
+    self.cp(self.memory[self.iy + d]);
+    self.cycles += 19;
+}
+
+fn cp__ixd(self: *Z80) void {
+    // 0xDD 0xBE CP (IX+d)
+    const d = self.fetchByte();
+    self.cp(self.memory[self.ix + d]);
+    self.cycles += 19;
+}
+
 // 0xDD
 const IX_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
@@ -2879,10 +2984,10 @@ const IX_TABLE: [256]?*const fn (*Z80) void = .{
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 5
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 6
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 7
-    _______, _______, _______, _______, addaixh, addaixl, _______, _______, _______, _______, _______, _______, adcaixh, adcaixl, _______, _______, // 8
-    _______, _______, _______, _______, sub_ixh, sub_ixl, _______, _______, _______, _______, _______, _______, sbcaixh, sbcaixl, _______, _______, // 9
-    _______, _______, _______, _______, and_ixh, and_ixl, _______, _______, _______, _______, _______, _______, xor_ixh, xor_ixl, _______, _______, // A
-    _______, _______, _______, _______, ori__xh, ori__xl, _______, _______, _______, _______, _______, _______, cp__ixh, cp__ixl, _______, _______, // B
+    _______, _______, _______, _______, addaixh, addaixl, addaixd, _______, _______, _______, _______, _______, adcaixh, adcaixl, adcaiyd, _______, // 8
+    _______, _______, _______, _______, sub_ixh, sub_ixl, subaixd, _______, _______, _______, _______, _______, sbcaixh, sbcaixl, sbcaiyd, _______, // 9
+    _______, _______, _______, _______, and_ixh, and_ixl, and_ixd, _______, _______, _______, _______, _______, xor_ixh, xor_ixl, xor_ixd, _______, // A
+    _______, _______, _______, _______, ori__xh, ori__xl, or__ixd, _______, _______, _______, _______, _______, cp__ixh, cp__ixl, cp__ixd, _______, // B
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
     _______, pop__ix, _______, _______, _______, push_ix, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
@@ -2900,10 +3005,10 @@ const IY_TABLE: [256]?*const fn (*Z80) void = .{
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 5
     _______, _______, _______, _______, _______, _______, _______, _______, ldiyl_b, _______, _______, _______, _______, _______, _______, _______, // 6
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 7
-    _______, _______, _______, _______, addaiyh, addaiyl, _______, _______, _______, _______, _______, _______, adcaiyh, adcaixl, _______, _______, // 8
-    _______, _______, _______, _______, sub_iyh, sub_iyl, _______, _______, _______, _______, _______, _______, sbcaiyh, sbcaiyl, _______, _______, // 9
-    _______, _______, _______, _______, and_ixh, and_ixl, _______, _______, _______, _______, _______, _______, xor_iyh, xor_iyl, _______, _______, // A
-    _______, _______, _______, _______, or__iyh, or__iyl, _______, _______, _______, _______, _______, _______, cp__iyh, cp__iyl, _______, _______, // B
+    _______, _______, _______, _______, addaiyh, addaiyl, addaiyd, _______, _______, _______, _______, _______, adcaiyh, adcaixl, adcaiyd, _______, // 8
+    _______, _______, _______, _______, sub_iyh, sub_iyl, subaiyd, _______, _______, _______, _______, _______, sbcaiyh, sbcaiyl, sbcaiyd, _______, // 9
+    _______, _______, _______, _______, and_ixh, and_ixl, and_iyd, _______, _______, _______, _______, _______, xor_iyh, xor_iyl, xor_iyd, _______, // A
+    _______, _______, _______, _______, or__iyh, or__iyl, or__iyd, _______, _______, _______, _______, _______, cp__iyh, cp__iyl, cp__iyd, _______, // B
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
     _______, pop__iy, _______, _______, _______, push_iy, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
