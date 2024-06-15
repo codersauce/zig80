@@ -1853,6 +1853,7 @@ pub const Z80 = struct {
                 // std.debug.print("0xDD next_byte = {X:0>2}\n", .{next_byte});
                 const ix_instruction = IX_TABLE[next_byte];
                 if (ix_instruction == null) {
+                    std.debug.print("Unhandled 0xDD {X:0>2}\n", .{self.peekByte()});
                     self.cycles += 4;
                     self.execute();
                 } else {
@@ -2530,13 +2531,37 @@ fn ldiy_nn(self: *Z80) void {
     self.cycles += 14;
 }
 
+fn addixbc(self: *Z80) void {
+    // 0xDD 0x09 ADD IX, BC
+    self.ix = self.add16n(self.ix, self.bc, self.isCarry());
+    self.cycles += 15;
+}
+
+fn addixde(self: *Z80) void {
+    // 0xDD 0x19 ADD IX, DE
+    self.ix = self.add16n(self.ix, self.de, self.isCarry());
+    self.cycles += 15;
+}
+
+fn addixix(self: *Z80) void {
+    // 0xDD 0x29 ADD IX, IX
+    self.ix = self.add16n(self.ix, self.ix, self.isCarry());
+    self.cycles += 15;
+}
+
+fn addixsp(self: *Z80) void {
+    // 0xDD 0x39 ADD IX, SP
+    self.ix = self.add16n(self.ix, self.sp, self.isCarry());
+    self.cycles += 15;
+}
+
 // 0xDD
 const IX_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 0
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 1
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 2
-    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 3
+    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixbc, illegal, illegal, illegal, illegal, illegal, illegal, // 0
+    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixde, illegal, illegal, illegal, illegal, illegal, illegal, // 1
+    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixix, illegal, illegal, illegal, illegal, illegal, illegal, // 2
+    illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, addixsp, illegal, illegal, illegal, illegal, illegal, illegal, // 3
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 4
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 5
     illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, illegal, // 6
