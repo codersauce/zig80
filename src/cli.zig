@@ -8,7 +8,7 @@ const ArgIterator = struct {
     fn init(args: [][]const u8) ArgIterator {
         return ArgIterator{
             .args = args,
-            .index = 0,
+            .index = 1,
         };
     }
 
@@ -20,11 +20,56 @@ const ArgIterator = struct {
         self.index += 1;
         return arg;
     }
+
+    fn peek(self: *ArgIterator) ?[]const u8 {
+        if (self.index >= self.args.len) {
+            return null;
+        }
+        return self.args[self.index];
+    }
 };
 
-pub fn parse(args: [][]const u8, comptime T: type, obj: *T) !void {
-    var it = ArgIterator.init(args);
+pub fn parse(args: [][]const u8, comptime T: type, obj: *T) !bool {
     const fields = std.meta.fields(T);
+    var it = ArgIterator.init(args);
+
+    const first_arg = it.peek();
+    if (first_arg != null and std.mem.eql(u8, first_arg.?, "--help")) {
+        std.debug.print("Usage: {s}", .{args[0]});
+
+        inline for (fields) |field| {
+            const optional = @typeInfo(field.type) == .Optional or field.type == bool;
+            if (optional) {
+                std.debug.print(" [", .{});
+            } else {
+                std.debug.print(" ", .{});
+            }
+            std.debug.print("{s}", .{"--" ++ field.name});
+            switch (field.type) {
+                ?u32 => {
+                    std.debug.print(" <u32>", .{});
+                },
+                u32 => {
+                    std.debug.print(" <u32>", .{});
+                },
+                ?[]const u8 => {
+                    std.debug.print(" <string>", .{});
+                },
+                []const u8 => {
+                    std.debug.print(" <string>", .{});
+                },
+                bool => {},
+                else => {},
+            }
+            if (optional) {
+                std.debug.print("]", .{});
+            }
+        }
+
+        std.debug.print("\n", .{});
+        return false;
+    }
+
     while (it.next()) |arg| {
         inline for (fields) |field| {
             const name = "--" ++ field.name;
@@ -59,6 +104,8 @@ pub fn parse(args: [][]const u8, comptime T: type, obj: *T) !void {
             }
         }
     }
+
+    return true;
 }
 
 const Options = struct {

@@ -12,21 +12,10 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    var options = Options.init();
-    try cli.parse(args, Options, &options);
-
-    std.debug.print("Running {any}\n", .{options});
-
-    try tests.run(alloc, options.@"test");
-}
-
-const Options = struct {
-    /// Number of the test to run
-    @"test": ?u32,
-
-    pub fn init() Options {
-        return Options{
-            .@"test" = null,
-        };
+    var options = tests.Options.init();
+    if (!try cli.parse(args, tests.Options, &options)) {
+        return;
     }
-};
+
+    try tests.run(alloc, options);
+}
