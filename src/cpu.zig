@@ -1045,7 +1045,7 @@ pub const Z80 = struct {
 
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
-        std.debug.print("opcode = 0x{X:0>2}\n", .{self.peekByte()});
+        // std.debug.print("opcode = 0x{X:0>2}\n", .{self.peekByte()});
         self.executeOpcode(self.fetchOpcode());
     }
 
