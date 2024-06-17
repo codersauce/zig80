@@ -169,3 +169,7 @@ pub fn hi(value: u16) u8 {
 pub fn lo(value: u16) u8 {
     return @as(u8, @intCast(value & 0xFF));
 }
+
+pub fn u16FromBytes(low: u8, high: u8) u16 {
+    return @as(u16, @intCast(high)) << 8 | @as(u16, @intCast(low));
+}

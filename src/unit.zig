@@ -1,7 +1,16 @@
 const std = @import("std");
 const cpu_import = @import("cpu.zig");
 const utils = @import("utils.zig");
+const cli = @import("cli.zig");
+const c = @import("Z80.zig");
+
 const Allocator = std.mem.Allocator;
+const Z80 = cpu_import.Z80;
+const Flag = cpu_import.Flag;
+
+const Options = struct {
+    benchmark: bool,
+};
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
@@ -9,13 +18,55 @@ pub fn main() !void {
 
     const alloc = gpa.allocator();
 
+    const args = try std.process.argsAlloc(alloc);
+    defer std.process.argsFree(alloc, args);
+
+    var options = Options{ .benchmark = true };
+    if (!try cli.parse(args, Options, &options)) {
+        return;
+    }
+
     const tests = try loadTests(alloc);
     defer tests.deinit();
 
     const results = try loadTestResults(alloc);
     defer results.deinit();
 
-    var cpu = cpu_import.Z80.init(alloc);
+    if (options.benchmark) {
+        var cpu = c.Z80{};
+        for (tests.value, 0..) |t, n| {
+            var memory = [_]u8{0} ** 0x10000;
+            loadBench(&cpu, t, &memory);
+            std.debug.print("Running test '{s}'...\n", .{t.name});
+
+            const read = struct {
+                fn read(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+                    const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
+                    return mem[address];
+                }
+            }.read;
+
+            const write = struct {
+                fn write(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+                    const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
+                    mem[address] = value;
+                }
+            }.write;
+
+            cpu.read = read;
+            cpu.fetch = read;
+            cpu.write = write;
+            cpu.fetch_opcode = read;
+            cpu.context = &memory;
+            _ = c.z80_run(&cpu, 1);
+
+            compareBenchResult(&cpu, results.value[n], &memory);
+        }
+        // runBenchmark(alloc, tests.value, results.value);
+        return;
+    }
+
+    var cpu = Z80.init(alloc);
     for (tests.value, 0..) |t, n| {
         std.debug.print("Running test '{s}'...\n", .{t.name});
         loadTest(&cpu, t);
@@ -27,11 +78,136 @@ pub fn main() !void {
     }
 }
 
-fn compareResult(cpu: *cpu_import.Z80, result: TestResult) void {
+fn runBenchmark(alloc: Allocator, tests: []TestCase, results: []TestResult) void {
+    _ = alloc;
+    var cpu = c.Z80{};
+    for (tests, 0..) |t, n| {
+        var memory = [_]u8{0} ** 0x10000;
+        std.debug.print("Running test '{s}'...\n", .{t.name});
+        loadBench(&cpu, t, &memory);
+        _ = c.z80_run(&cpu, t.state.tStates);
+
+        compareBenchResult(&cpu, results[n], &memory);
+    }
+}
+
+fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) void {
+    _ = memory;
+    if (result.state.af != cpu.af.uint16_value) {
+        std.debug.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af.uint16_value });
+        var expected_flag = Flag.init(utils.lo(result.state.afDash));
+        var actual_flag = Flag.init(utils.lo(cpu.af.uint16_value));
+        std.debug.print("  expected: ", .{});
+        expected_flag.dump();
+        std.debug.print("  actual:   ", .{});
+        actual_flag.dump();
+    }
+
+    if (result.state.bc != cpu.bc.uint16_value) {
+        std.debug.print("BC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bc, cpu.bc.uint16_value });
+    }
+
+    if (result.state.de != cpu.de.uint16_value) {
+        std.debug.print("DE mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.de, cpu.de.uint16_value });
+    }
+
+    if (result.state.hl != cpu.hl.uint16_value) {
+        std.debug.print("HL mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hl, cpu.hl.uint16_value });
+    }
+
+    if (result.state.afDash != cpu.af_.uint16_value) {
+        std.debug.print("AF' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.afDash, cpu.af_.uint16_value });
+    }
+
+    if (result.state.bcDash != cpu.bc_.uint16_value) {
+        std.debug.print("BC' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bcDash, cpu.bc_.uint16_value });
+    }
+
+    if (result.state.deDash != cpu.de_.uint16_value) {
+        std.debug.print("DE' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.deDash, cpu.de_.uint16_value });
+    }
+
+    if (result.state.hlDash != cpu.hl_.uint16_value) {
+        std.debug.print("HL' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hlDash, cpu.hl_.uint16_value });
+    }
+
+    // if (result.state.ix != cpu.ix.uint16_value) {
+    //     std.debug.print("IX mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.ix, cpu.ix.uint16_value });
+    // }
+    //
+    // if (result.state.iy != cpu.iy.uint16_value) {
+    //     std.debug.print("IY mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.iy, cpu.iy.uint16_value });
+    // }
+
+    if (result.state.sp != cpu.sp.uint16_value) {
+        std.debug.print("SP mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.sp, cpu.sp.uint16_value });
+    }
+
+    if (result.state.pc != cpu.pc.uint16_value) {
+        std.debug.print("PC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.pc, cpu.pc.uint16_value });
+    }
+
+    if (result.state.i != cpu.i) {
+        std.debug.print("I mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.i, cpu.i });
+    }
+
+    if (result.state.r != cpu.r) {
+        std.debug.print("R mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.r, cpu.r });
+    }
+
+    // if (result.state.iff1 != cpu.iff1) {
+    //     std.debug.print("IFF1 mismatch: expected {}, got {}\n", .{ result.state.iff1, cpu.iff1 });
+    // }
+    //
+    // if (result.state.iff2 != cpu.iff2) {
+    //     std.debug.print("IFF2 mismatch: expected {}, got {}\n", .{ result.state.iff2, cpu.iff2 });
+    // }
+    //
+    // if (result.state.im != cpu.im) {
+    //     std.debug.print("IM mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.im, cpu.im });
+    // }
+    //
+    // if (result.state.halted != cpu.halt_line) {
+    //     std.debug.print("Halted mismatch: expected {}, got {}\n", .{ result.state.halted, cpu.halt_line });
+    // }
+    //
+    // if (result.state.tStates != cpu.cycles - 1) {
+    //     std.debug.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
+    // }
+    //
+}
+
+fn loadBench(cpu: *c.Z80, t: TestCase, memory: *[0x10000]u8) void {
+    cpu.af.uint16_value = t.state.af;
+    cpu.bc.uint16_value = t.state.bc;
+    cpu.de.uint16_value = t.state.de;
+    cpu.hl.uint16_value = t.state.hl;
+    cpu.af_.uint16_value = t.state.afDash;
+    cpu.bc_.uint16_value = t.state.bcDash;
+    cpu.de_.uint16_value = t.state.deDash;
+    cpu.hl_.uint16_value = t.state.hlDash;
+    // cpu.ix.uint16_value = t.state.ix;
+    // cpu.iy.uint16_value = t.state.iy;
+    cpu.sp.uint16_value = t.state.sp;
+    cpu.pc.uint16_value = t.state.pc;
+    // cpu.memptr = t.state.memptr;
+    cpu.i = t.state.i;
+    cpu.r = t.state.r;
+    cpu.iff1 = if (t.state.iff1) 1 else 0;
+    cpu.iff2 = if (t.state.iff2) 1 else 0;
+    cpu.im = t.state.im;
+    cpu.halt_line = if (t.state.halted) 1 else 0;
+
+    for (t.memory) |m| {
+        @memcpy(memory[m.address .. m.address + m.data.len], m.data);
+    }
+}
+
+fn compareResult(cpu: *Z80, result: TestResult) void {
     if (result.state.af != cpu.af) {
         std.debug.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af });
-        var expected_flag = cpu_import.Flag.init(utils.lo(result.state.afDash));
-        var actual_flag = cpu_import.Flag.init(utils.lo(cpu.getF()));
+        var expected_flag = Flag.init(utils.lo(result.state.afDash));
+        var actual_flag = Flag.init(utils.lo(cpu.getF()));
         std.debug.print("  expected: ", .{});
         expected_flag.dump();
         std.debug.print("  actual:   ", .{});
@@ -148,7 +324,7 @@ fn loadTests(alloc: Allocator) !std.json.Parsed([]TestCase) {
     return tests;
 }
 
-fn loadTest(cpu: *cpu_import.Z80, t: TestCase) void {
+fn loadTest(cpu: *Z80, t: TestCase) void {
     cpu.reset();
     cpu.af = t.state.af;
     cpu.bc = t.state.bc;

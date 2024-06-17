@@ -16,10 +16,11 @@ pub fn build(b: *std.Build) void {
 
     const unit_exe = b.addExecutable(.{
         .name = "zig80-test",
-        .root_source_file = b.path("src/test/unit.zig"),
+        .root_source_file = b.path("src/unit.zig"),
         .target = target,
         .optimize = opt,
     });
 
+    unit_exe.linkSystemLibrary("z80");
     b.installArtifact(unit_exe);
 }
