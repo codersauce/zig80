@@ -33,6 +33,7 @@ pub fn main() !void {
     defer results.deinit();
 
     if (options.benchmark) {
+        std.debug.print("Running on benchmark emulator...\n", .{});
         for (tests.value, 0..) |t, n| {
             const r = results.value[n];
             runBenchmark(t, r);
@@ -40,16 +41,27 @@ pub fn main() !void {
         return;
     }
 
-    var cpu = Z80.init(alloc);
+    std.debug.print("Running on our emulator...\n", .{});
     for (tests.value, 0..) |t, n| {
-        std.debug.print("Running test '{s}'...\n", .{t.name});
-        loadTest(&cpu, t);
-        // TODO: execute n steps (based on memory?)
-        cpu.execute();
-
-        const r = results.value[n];
-        compareResult(&cpu, r);
+        runTest(alloc, t, results.value[n]);
     }
+}
+
+fn runTest(alloc: Allocator, t: TestCase, result: TestResult) void {
+    var cpu = Z80.init(alloc);
+    std.debug.print("Running test '{s}'...\n", .{t.name});
+    loadTest(&cpu, t);
+
+    var current_cycles = cpu.cycles;
+    while (cpu.cycles < result.state.tStates) {
+        cpu.execute();
+        if (current_cycles == cpu.cycles) {
+            std.debug.panic("No cycles\n", .{});
+            break;
+        }
+        current_cycles = cpu.cycles;
+    }
+    compareResult(&cpu, result);
 }
 
 fn runBenchmark(t: TestCase, result: TestResult) void {
@@ -95,7 +107,16 @@ fn runBenchmark(t: TestCase, result: TestResult) void {
     cpu.in = readPort;
     cpu.out = writePort;
     cpu.context = &memory;
-    _ = c.z80_run(&cpu, 1);
+
+    var current_cycles: usize = 0;
+    while (current_cycles < result.state.tStates) {
+        const cycles = c.z80_run(&cpu, 1);
+        if (cycles == 0) {
+            std.debug.panic("No cycles\n", .{});
+            break;
+        }
+        current_cycles += cycles;
+    }
 
     compareBenchResult(&cpu, result, &memory);
 }
