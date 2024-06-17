@@ -1,0 +1,31 @@
+[
+  {
+    "name": "00",
+    "busActivity": [
+      { "time": 0, "type": "MC", "address": 0 },
+      { "time": 4, "type": "MR", "address": 0, "value": 0 }
+    ],
+    "state": {
+      "af": 0,
+      "bc": 0,
+      "de": 0,
+      "hl": 0,
+      "afDash": 0,
+      "bcDash": 0,
+      "deDash": 0,
+      "hlDash": 0,
+      "ix": 0,
+      "iy": 0,
+      "sp": 0,
+      "pc": 1,
+      "memptr": 0,
+      "i": 0,
+      "r": 1,
+      "iff1": false,
+      "iff2": false,
+      "im": 0,
+      "halted": false,
+      "tStates": 4
+    }
+  }
+]

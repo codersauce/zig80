@@ -4,6 +4,8 @@ const Allocator = std.mem.Allocator;
 const utils = @import("utils.zig");
 
 pub const Z80 = struct {
+    alloc: Allocator,
+
     // 8-bit registers
     af: u16,
     bc: u16,
@@ -31,6 +33,10 @@ pub const Z80 = struct {
     iff2: bool, // Interrupt flip-flop 2
     im: u8, // Interrupt mode
 
+    // "WZ" register.
+    // https://www.grimware.org/lib/exe/fetch.php/documentations/devices/z80/z80.memptr.eng.txt
+    wl: u16,
+
     // Memory (for simplicity, let's assume 64KB)
     memory: [65536]u8,
 
@@ -54,7 +60,7 @@ pub const Z80 = struct {
     in: ?*const fn (*Z80, port: u8) u8,
 
     // Initialize the CPU state
-    pub fn init() Z80 {
+    pub fn init(alloc: Allocator) Z80 {
         const memory: [65536]u8 = [_]u8{0} ** 65536;
         const af: u16 = 0;
         const bc: u16 = 0;
@@ -69,6 +75,7 @@ pub const Z80 = struct {
         const cycles: u64 = 0;
 
         return Z80{
+            .alloc = alloc,
             .af = af,
             .bc = bc,
             .de = de,
@@ -86,6 +93,7 @@ pub const Z80 = struct {
             .im = 0,
             .iff1 = false,
             .iff2 = false,
+            .wl = 0,
             .memory = memory,
             .cycles = cycles,
             .halt = false,
@@ -118,10 +126,101 @@ pub const Z80 = struct {
         self.cycles = 0;
         self.halt = false;
         self.pending_opcode = null;
+        self.wl = 0;
         // self.write = null;
         // self.hook = null;
         // self.out = null;
         self.clearMemory();
+    }
+
+    pub fn saveState(self: *Z80, path: []const u8) void {
+        self.pc -= 1;
+        var memory_map = std.ArrayList(u8).init(self.alloc);
+        defer memory_map.deinit();
+
+        for (self.memory, 0..) |byte, i| {
+            if (byte != 0) {
+                const addr_hi: u8 = utils.hi(@intCast(i));
+                const addr_lo: u8 = utils.lo(@intCast(i));
+                memory_map.append(addr_hi) catch {};
+                memory_map.append(addr_lo) catch {};
+                memory_map.append(byte) catch {};
+            }
+        }
+
+        var f = std.fs.cwd().createFile(path, .{ .truncate = true }) catch {
+            std.debug.print("Failed to create file\n", .{});
+            return;
+        };
+        const data: SaveData = .{
+            .af = self.af,
+            .bc = self.bc,
+            .de = self.de,
+            .hl = self.hl,
+            .af_ = self.af_,
+            .bc_ = self.bc_,
+            .de_ = self.de_,
+            .hl_ = self.hl_,
+            .pc = self.pc,
+            .sp = self.sp,
+            .ix = self.ix,
+            .iy = self.iy,
+            .i = self.i,
+            .r = self.r,
+            .im = self.im,
+            .iff1 = self.iff1,
+            .iff2 = self.iff2,
+            .memory = memory_map.items,
+            .cycles = self.cycles,
+            .pending_opcode = self.pending_opcode,
+        };
+        std.json.stringify(data, .{}, f.writer()) catch {
+            std.debug.print("Failed to save state\n", .{});
+        };
+    }
+
+    pub fn loadState(self: *Z80, path: []const u8) !void {
+        var f = try std.fs.cwd().openFile(path, .{});
+        defer f.close();
+
+        const data = try f.reader().readAllAlloc(self.alloc, 1_000_000);
+        const json = try std.json.parseFromSlice(SaveData, self.alloc, data, .{});
+        defer json.deinit();
+
+        const state = json.value;
+
+        self.af = state.af;
+        self.bc = state.bc;
+        self.de = state.de;
+        self.hl = state.hl;
+        self.af_ = state.af_;
+        self.bc_ = state.bc_;
+        self.de_ = state.de_;
+        self.hl_ = state.hl_;
+        self.pc = state.pc;
+        self.sp = state.sp;
+        self.ix = state.ix;
+        self.iy = state.iy;
+        self.i = state.i;
+        self.r = state.r;
+        self.im = state.im;
+        self.iff1 = state.iff1;
+        self.iff2 = state.iff2;
+        self.cycles = state.cycles;
+        self.pending_opcode = state.pending_opcode;
+
+        var i: u32 = 0;
+        while (true) {
+            const addr_hi = state.memory[i];
+            const addr_lo = state.memory[i + 1];
+            const addr = @as(u16, @intCast(addr_hi)) << 8 | @as(u16, @intCast(addr_lo));
+            self.memory[addr] = state.memory[i + 2];
+            i += 3;
+
+            if (i + 2 >= state.memory.len) {
+                break;
+            }
+        }
     }
 
     pub fn isHalted(self: *Z80) bool {
@@ -211,6 +310,14 @@ pub const Z80 = struct {
 
     pub fn incSP(self: *Z80) void {
         self.setSP(self.sp +% 1);
+    }
+
+    pub fn getHLMemory(self: *Z80) u8 {
+        return self.memory[self.hl];
+    }
+
+    pub fn setHLMemory(self: *Z80, v: u8) void {
+        self.memory[self.hl] = v;
     }
 
     pub fn decE(self: *Z80) void {
@@ -364,8 +471,6 @@ pub const Z80 = struct {
         flag.setCarry(result > 0xFFFF);
         flag.setHalfCarry((v1 & 0x0FFF) + (v2 & 0x0FFF) > 0x0FFF);
         self.setF(flag.get());
-
-        self.cycles += 11;
 
         const res: u16 = @intCast(result & 0xFFFF);
         return res;
@@ -678,6 +783,92 @@ pub const Z80 = struct {
         self.cycles += 4;
     }
 
+    fn rlc(self: *Z80, v: u8) u8 {
+        // op_cbh(rlc, bv old = val >> 7; val = (val << 1) | old; cf = old;)
+        const old = v >> 7;
+        const res = (v << 1) | old;
+        self.setCarry(old != 0);
+        return res;
+    }
+
+    fn rrc(self: *Z80, v: u8) u8 {
+        // op_cbh(rrc, bv old = val & 1; val = (val >> 1) | (old << 7); cf = old;)
+        const old = v & 1;
+        const res = (v >> 1) | (old << 7);
+        self.setCarry(old != 0);
+        return res;
+    }
+
+    fn rl(self: *Z80, v: u8) u8 {
+        // op_cbh(rl, bv old = val >> 7; val = (val << 1) | cf; cf = old;)
+        const old = v >> 7;
+        const carry: u8 = if (self.isCarry()) 1 else 0;
+        const res = (v << 1) | carry;
+        self.setCarry(old != 0);
+        return res;
+    }
+
+    fn rr(self: *Z80, v: u8) u8 {
+        // op_cbh(rr, bv old = val & 1; val = (val >> 1) | (cf << 7); cf = old;)
+        const old = v & 1;
+        const carry: u8 = if (self.isCarry()) 1 else 0;
+        const res = (v >> 1) | carry << 7;
+        self.setCarry(old != 0);
+        return res;
+    }
+
+    fn sla(self: *Z80, v: u8) u8 {
+        // op_cbh(sla, cf = val >> 7; val <<= 1;)
+        const res = v << 1;
+        self.setCarry(v >> 7 != 0);
+        return res;
+    }
+
+    fn sra(self: *Z80, v: u8) u8 {
+        // op_cbh(sra, cf = val & 1; val = (val >> 1) | (val & 0x80);)
+        const res = (v >> 1) | (v & 0x80);
+        self.setCarry(v & 1 != 0);
+        return res;
+    }
+
+    fn sll(self: *Z80, v: u8) u8 {
+        // op_cbh(sll, cf = val >> 7; val = (val << 1) | 1;)
+        const res = (v << 1) | 1;
+        self.setCarry(v >> 7 != 0);
+        return res;
+    }
+
+    fn srl(self: *Z80, v: u8) u8 {
+        // op_cbh(srl, cf = val & 1; val >>= 1;)
+        const res = v >> 1;
+        self.setCarry(v & 1 != 0);
+        return res;
+    }
+
+    /// Detects if n-th bit of an u8 is set
+    fn bt(self: *Z80, n: u3, val: u8) u8 {
+        const res_val = val & (@as(u8, 1) << n);
+        const res = res_val != 0;
+        self.setZero(res);
+        self.setParityOverflow(res);
+        self.setXYFromU8(val);
+        self.setHalfCarry(true);
+        self.setSubtract(false);
+        return res_val;
+    }
+
+    /// Detects if n-th bit of an u8 is set
+    fn bit(self: *Z80, n: u3, val: u8) bool {
+        const res_val = val & (@as(u8, 1) << n);
+        const res = res_val != 0;
+        self.setZero(res);
+        self.setParityOverflow(res);
+        self.setXYFromU8(val);
+        self.setHalfCarry(true);
+        self.setSubtract(false);
+        return res;
+    }
+
     pub fn rst(self: *Z80, address: u16) void {
         self.decSP();
         const byte1 = @as(u8, @intCast(self.pc >> 8));
@@ -737,24 +928,24 @@ pub const Z80 = struct {
     }
 
     pub fn writeByte(self: *Z80, address: u16, value: u8) void {
-        if (self.write != null) {
-            self.write.?(self, address, value);
+        if (self.write) |write| {
+            write(self, address, value);
             return;
         }
         self.memory[@as(usize, address)] = value;
     }
 
     pub fn writeToPort(self: *Z80, port: u8, value: u8) void {
-        if (self.out != null) {
-            self.out.?(self, port, value);
+        if (self.out) |out| {
+            out(self, port, value);
             return;
         }
         std.debug.print("OUT {X:0>2}, {X:0>2}\n", .{ port, value });
     }
 
     pub fn readFromPort(self: *Z80, port: u8) u8 {
-        if (self.in != null) {
-            return self.in.?(self, port);
+        if (self.in) |in| {
+            return in(self, port);
         }
         std.debug.print("IN {X:0>2}\n", .{port});
         return 0;
@@ -780,23 +971,81 @@ pub const Z80 = struct {
         }
     }
 
-    pub fn isZero(self: *Z80) bool {
+    fn isZero(self: *Z80) bool {
         var flag = self.getFlag();
         return flag.isZero();
     }
 
-    pub fn isSign(self: *Z80) bool {
+    fn setZero(self: *Z80, zero: bool) void {
+        var flag = self.getFlag();
+        flag.setZero(zero);
+        self.setF(flag.get());
+    }
+
+    fn isSign(self: *Z80) bool {
         var flag = self.getFlag();
         return flag.isSign();
     }
 
-    pub fn isCarry(self: *Z80) bool {
+    fn setSign(self: *Z80, sign: bool) void {
+        var flag = self.getFlag();
+        flag.setSign(sign);
+        self.setF(flag.get());
+    }
+
+    fn isCarry(self: *Z80) bool {
         var flag = self.getFlag();
         return flag.isCarry();
     }
 
+    fn setCarry(self: *Z80, carry: bool) void {
+        var flag = self.getFlag();
+        flag.setCarry(carry);
+        self.setF(flag.get());
+    }
+
+    fn isParityOverflow(self: *Z80) bool {
+        var flag = self.getFlag();
+        return flag.isParityOverflow();
+    }
+
+    fn setParityOverflow(self: *Z80, po: bool) void {
+        var flag = self.getFlag();
+        flag.setParityOverflow(po);
+        self.setF(flag.get());
+    }
+
+    fn isHalfCarry(self: *Z80) bool {
+        var flag = self.getFlag();
+        return flag.isHalfCarry();
+    }
+
+    fn setHalfCarry(self: *Z80, half_carry: bool) void {
+        var flag = self.getFlag();
+        flag.setHalfCarry(half_carry);
+        self.setF(flag.get());
+    }
+
+    fn isSubtract(self: *Z80) bool {
+        var flag = self.getFlag();
+        return flag.isSubtract();
+    }
+
+    fn setSubtract(self: *Z80, subtract: bool) void {
+        var flag = self.getFlag();
+        flag.setSubtract(subtract);
+        self.setF(flag.get());
+    }
+
+    fn setXYFromU8(self: *Z80, v: u8) void {
+        var flag = self.getFlag();
+        flag.setXYFromU8(v);
+        self.setF(flag.get());
+    }
+
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
+        std.debug.print("opcode = 0x{X:0>2}\n", .{self.peekByte()});
         self.executeOpcode(self.fetchOpcode());
     }
 
@@ -925,6 +1174,11 @@ pub const Z80 = struct {
                 self.setD(self.inc(self.getD()));
                 self.cycles += 4;
             },
+            0x15 => {
+                // DEC D
+                self.setD(self.dec(self.getD()));
+                self.cycles += 4;
+            },
             0x16 => {
                 // LD D, n
                 self.setD(self.fetchByte());
@@ -959,6 +1213,7 @@ pub const Z80 = struct {
             0x19 => {
                 // ADD HL, DE
                 self.hl = self.add16(self.hl, self.de);
+                self.cycles += 11;
             },
             0x1A => {
                 // LD A, (DE)
@@ -979,6 +1234,11 @@ pub const Z80 = struct {
                 // DEC E
                 self.setE(self.dec(self.getE()));
                 self.cycles += 4;
+            },
+            0x1E => {
+                // LD E, n
+                self.setE(self.fetchByte());
+                self.cycles += 7;
             },
             0x1F => {
                 // RRA
@@ -1110,6 +1370,7 @@ pub const Z80 = struct {
             0x29 => {
                 // ADD HL, HL
                 self.hl = self.add16(self.hl, self.hl);
+                self.cycles += 11;
             },
             0x2A => {
                 // LD HL, (nn)
@@ -1117,7 +1378,7 @@ pub const Z80 = struct {
                 const lo = self.memory[addr];
                 const hi = self.memory[addr + 1];
                 self.hl = @as(u16, @intCast(hi)) << 8 | lo;
-                self.cycles += 14;
+                self.cycles += 16;
             },
             0x2B => {
                 // DEC HL
@@ -1182,12 +1443,12 @@ pub const Z80 = struct {
             0x34 => {
                 // INC (HL)
                 self.writeByte(self.hl, self.inc(self.memory[self.hl]));
-                self.cycles += 10;
+                self.cycles += 11;
             },
             0x35 => {
                 // DEC (HL)
                 self.writeByte(self.hl, self.dec(self.memory[self.hl]));
-                self.cycles += 10;
+                self.cycles += 11;
             },
             0x36 => {
                 // LD (HL), n
@@ -1217,6 +1478,7 @@ pub const Z80 = struct {
             0x39 => {
                 // ADD HL, SP
                 self.hl = self.add16(self.hl, self.sp);
+                self.cycles += 11;
             },
             0x3A => {
                 // LD A, (nn)
@@ -1246,13 +1508,22 @@ pub const Z80 = struct {
             },
             0x3F => {
                 // CCF
-                const carry = self.isCarry();
                 var flag = self.getFlag();
-                flag.setXYFromU8(self.getA());
+                // flag.setHalfCarry(flag.isCarry());
                 flag.setCarry(!flag.isCarry());
-                flag.setHalfCarry(carry);
                 flag.setSubtract(false);
+                flag.setXYFromU8(self.getA());
                 self.setF(flag.get());
+                self.cycles += 4;
+            },
+            0x40 => {
+                // LD B, B
+                self.setB(self.getB());
+                self.cycles += 4;
+            },
+            0x41 => {
+                // LD B, C
+                self.setB(self.getC());
                 self.cycles += 4;
             },
             0x42 => {
@@ -1268,6 +1539,11 @@ pub const Z80 = struct {
             0x44 => {
                 // LD B, H
                 self.setB(self.getH());
+                self.cycles += 4;
+            },
+            0x45 => {
+                // LD B, L
+                self.setB(self.getL());
                 self.cycles += 4;
             },
             0x46 => {
@@ -1293,6 +1569,21 @@ pub const Z80 = struct {
             0x4A => {
                 // LD C, D
                 self.setC(self.getD());
+                self.cycles += 4;
+            },
+            0x4B => {
+                // LD C, E
+                self.setC(self.getE());
+                self.cycles += 4;
+            },
+            0x4C => {
+                // LD C, H
+                self.setC(self.getH());
+                self.cycles += 4;
+            },
+            0x4D => {
+                // LD C, L
+                self.setC(self.getL());
                 self.cycles += 4;
             },
             0x4E => {
@@ -1330,14 +1621,44 @@ pub const Z80 = struct {
                 self.setD(self.getH());
                 self.cycles += 4;
             },
+            0x55 => {
+                // LD D, L
+                self.setD(self.getL());
+                self.cycles += 4;
+            },
+            0x56 => {
+                // LD D, (HL)
+                self.setD(self.memory[self.hl]);
+                self.cycles += 7;
+            },
+            0x57 => {
+                // LD D, A
+                self.setD(self.getA());
+                self.cycles += 4;
+            },
             0x58 => {
                 // LD E, B
                 self.setE(self.getB());
                 self.cycles += 4;
             },
+            0x59 => {
+                // LD E, C
+                self.setE(self.getC());
+                self.cycles += 4;
+            },
+            0x5A => {
+                // LD E, D
+                self.setE(self.getD());
+                self.cycles += 4;
+            },
             0x5B => {
                 // LD E, E
                 self.setE(self.getE());
+                self.cycles += 4;
+            },
+            0x5C => {
+                // LD E, H
+                self.setE(self.getH());
                 self.cycles += 4;
             },
             0x5D => {
@@ -1377,8 +1698,8 @@ pub const Z80 = struct {
             },
             0x64 => {
                 // LD H, H
-                if (self.hook != null) {
-                    self.executeOpcode(self.hook.?(self, self.pc - 1));
+                if (self.hook) |hook| {
+                    self.executeOpcode(hook(self, self.pc - 1));
                 } else {
                     self.setH(self.getH());
                     self.cycles += 4;
@@ -1409,6 +1730,11 @@ pub const Z80 = struct {
                 self.setL(self.getC());
                 self.cycles += 4;
             },
+            0x6A => {
+                // LD L, D
+                self.setL(self.getD());
+                self.cycles += 4;
+            },
             0x6B => {
                 // LD L, E
                 self.setL(self.getE());
@@ -1423,6 +1749,11 @@ pub const Z80 = struct {
                 // LD L, L
                 self.setL(self.getL());
                 self.cycles += 4;
+            },
+            0x6E => {
+                // LD L, (HL)
+                self.setL(self.memory[self.hl]);
+                self.cycles += 7;
             },
             0x6F => {
                 // LD L, A
@@ -1489,6 +1820,16 @@ pub const Z80 = struct {
             0x7B => {
                 // LD A, E
                 self.setA(self.getE());
+                self.cycles += 4;
+            },
+            0x7C => {
+                // LD A, H
+                self.setA(self.getH());
+                self.cycles += 4;
+            },
+            0x7D => {
+                // LD A, L
+                self.setA(self.getL());
                 self.cycles += 4;
             },
             0x7E => {
@@ -1820,6 +2161,10 @@ pub const Z80 = struct {
                 const n = self.fetchByte();
                 self.add(self.getA(), n);
             },
+            0xC7 => {
+                // RST 00H
+                self.rst(0x00);
+            },
             0xC8 => {
                 // RET Z
                 if (self.isZero()) {
@@ -1852,17 +2197,33 @@ pub const Z80 = struct {
             },
             0xCB => {
                 // CB Extended Instructions
-                const next_byte = self.peekByte();
+                self.exec_cb(self.fetchByte());
                 // std.debug.print("0xCB next_byte = {X:0>2}\n", .{next_byte});
-                const cb_instruction = BIT_TABLE[next_byte];
-                if (cb_instruction == null) {
-                    std.debug.print("Unhandled 0xCB {X:0>2}\n", .{self.peekByte()});
-                    self.cycles += 4;
-                    self.execute();
+                // const cb_instruction = BIT_TABLE[next_byte];
+                // std.debug.print("0xCB cb_instruction = {any}\n", .{cb_instruction});
+                // if (cb_instruction == null) {
+                //     self.saveState("/tmp/cpu.json");
+                //     std.debug.panic("Unhandled 0xCB {X:0>2}\n", .{next_byte});
+                //     // self.cycles += 4;
+                //     // self.execute();
+                // } else {
+                //     _ = self.fetchOpcode();
+                //     _ = cb_instruction.?(self);
+                //     // std.debug.print("CB instruction: {any} {any}\n", .{ res, cb_instruction });
+                // }
+            },
+            0xCC => {
+                // CALL Z, nn
+                const addr = self.fetchWord();
+                if (self.isZero()) {
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+                    self.pc = addr;
+                    self.cycles += 17;
                 } else {
-                    _ = self.fetchOpcode();
-                    _ = cb_instruction.?(self);
-                    // std.debug.print("CB instruction: {any} {any}\n", .{ res, cb_instruction });
+                    self.cycles += 10;
                 }
             },
             0xCD => {
@@ -1882,6 +2243,10 @@ pub const Z80 = struct {
                 // ADC A, n
                 const n = self.fetchByte();
                 self.adc(n);
+            },
+            0xCF => {
+                // RST 08H
+                self.rst(0x08);
             },
             0xD0 => {
                 // RET NC
@@ -1917,6 +2282,20 @@ pub const Z80 = struct {
                 const port = self.fetchByte();
                 self.writeToPort(port, self.getA());
                 self.cycles += 11;
+            },
+            0xD4 => {
+                // CALL NC, nn
+                const addr = self.fetchWord();
+                if (!self.isCarry()) {
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc >> 8)));
+                    self.decSP();
+                    self.writeByte(self.sp, @as(u8, @intCast(self.pc & 0xFF)));
+                    self.pc = addr;
+                    self.cycles += 17;
+                } else {
+                    self.cycles += 10;
+                }
             },
             0xD5 => {
                 // PUSH DE
@@ -1964,6 +2343,12 @@ pub const Z80 = struct {
                 }
                 self.cycles += 10;
             },
+            0xDB => {
+                // IN A, (n)
+                const port = self.fetchByte();
+                self.setA(self.readFromPort(port));
+                self.cycles += 11;
+            },
             0xDC => {
                 // CALL C, nn
                 const addr = self.fetchWord();
@@ -1984,7 +2369,8 @@ pub const Z80 = struct {
                 // std.debug.print("0xDD next_byte = {X:0>2}\n", .{next_byte});
                 const ix_instruction = IX_TABLE[next_byte];
                 if (ix_instruction == null) {
-                    std.debug.print("Unhandled 0xDD {X:0>2}\n", .{self.peekByte()});
+                    self.saveState("/tmp/cpu.json");
+                    std.debug.panic("Unhandled 0xDD {X:0>2}\n", .{next_byte});
                     self.cycles += 4;
                     self.execute();
                 } else {
@@ -2117,6 +2503,7 @@ pub const Z80 = struct {
                         self.halt = true;
                     },
                     else => |code| {
+                        self.saveState("/tmp/cpu.json");
                         std.debug.panic("Unknown extended opcode: {0X:0>2}\n", .{code});
                     },
                 }
@@ -2300,7 +2687,8 @@ pub const Z80 = struct {
                 // IY Extended Instructions
                 const iy_instruction = IY_TABLE[self.peekByte()];
                 if (iy_instruction == null) {
-                    std.debug.print("Unhandled 0xFD {X:0>2}\n", .{self.peekByte()});
+                    self.saveState("/tmp/cpu.json");
+                    std.debug.panic("Unhandled 0xFD {X:0>2}\n", .{self.peekByte()});
                     self.cycles += 4;
                     self.execute();
                 } else {
@@ -2390,12 +2778,13 @@ pub const Z80 = struct {
             },
             else => |code| {
                 std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
+                self.saveState("/tmp/cpu.json");
             },
         }
     }
 
-    pub fn dumpState(self: *Z80, alloc: Allocator) ![]const u8 {
-        return try std.fmt.allocPrint(alloc, "[cpu] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} sp={X:0>4} pc={X:0>4}", .{ self.getA(), self.getF(), self.getB(), self.getC(), self.getD(), self.getE(), self.getH(), self.getL(), self.sp, self.pc });
+    pub fn dumpState(self: *Z80) ![]const u8 {
+        return try std.fmt.allocPrint(self.alloc, "[cpu] a={X:0>2} f={X:0>2} b={X:0>2} c={X:0>2} d={X:0>2} e={X:0>2} h={X:0>2} l={X:0>2} sp={X:0>4} pc={X:0>4}", .{ self.getA(), self.getF(), self.getB(), self.getC(), self.getD(), self.getE(), self.getH(), self.getL(), self.sp, self.pc });
     }
 
     pub fn printState(self: *Z80) void {
@@ -2411,14 +2800,14 @@ pub const Z80 = struct {
         self.memory = [_]u8{0} ** 65536;
     }
 
-    pub fn dumpMemory(self: *Z80, alloc: Allocator) ![]const u8 {
-        var res = std.ArrayList(u8).init(alloc);
+    pub fn dumpMemory(self: *Z80) ![]const u8 {
+        var res = std.ArrayList(u8).init(self.alloc);
         defer res.deinit();
 
         for (self.memory, 0..) |byte, i| {
             if (byte != 0) {
-                const s = try std.fmt.allocPrint(alloc, "   {d}: {d}\n", .{ i, byte });
-                defer alloc.free(s);
+                const s = try std.fmt.allocPrint(self.alloc, "   {d}: {d}\n", .{ i, byte });
+                defer self.alloc.free(s);
 
                 try res.appendSlice(s);
             }
@@ -2426,6 +2815,120 @@ pub const Z80 = struct {
 
         return res.toOwnedSlice();
     }
+
+    // 0xCB - Bit Instructions
+    fn exec_cb(self: *Z80, opcode: u8) void {
+        self.incR();
+        self.cycles += CB_CYCLES_TABLE[opcode];
+        const dk: u8 = (opcode >> 6) & 0b11; // opcode kind
+        const da: u3 = @as(u3, @intCast((opcode >> 3) & 0b111)); // auxiliary / op0 kind type
+        const dr: u8 = opcode & 0b111; // data
+
+        // auxiliary storage for data under hl
+        var hlr: u8 = 0;
+
+        const getReg: *const fn (*Z80) u8 = switch (dr) {
+            0 => &getB,
+            1 => &getC,
+            2 => &getD,
+            3 => &getE,
+            4 => &getH,
+            5 => &getL,
+            6 => blk: {
+                hlr = self.memory[self.hl];
+                break :blk &getHLMemory;
+            },
+            7 => &getA,
+            else => |code| {
+                self.saveState("/tmp/cpu.json");
+                std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
+            },
+        };
+
+        const setReg: *const fn (*Z80, u8) void = switch (dr) {
+            0 => setB,
+            1 => setC,
+            2 => setD,
+            3 => setE,
+            4 => setH,
+            5 => setL,
+            6 => setHLMemory,
+            7 => setA,
+            else => |code| {
+                self.saveState("/tmp/cpu.json");
+                std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
+            },
+        };
+
+        switch (dk) {
+            0 => {
+                _ = switch (da) {
+                    0 => self.rlc(getReg(self)),
+                    1 => self.rrc(getReg(self)),
+                    2 => self.rl(getReg(self)),
+                    3 => self.rr(getReg(self)),
+                    4 => self.sla(getReg(self)),
+                    5 => self.sra(getReg(self)),
+                    6 => self.sll(getReg(self)),
+                    7 => self.srl(getReg(self)),
+                };
+            },
+            1 => {
+                setReg(self, self.bt(da, getReg(self)));
+
+                // Odd edge case. See the WZ comment.
+                if (da == 6) {
+                    self.setXYFromU8(utils.hi(self.wl));
+                }
+            },
+            2 => setReg(self, getReg(self) & ~(@as(u8, 1) << da)),
+            3 => setReg(self, getReg(self) | (@as(u8, 1) << da)),
+            else => {},
+        }
+
+        // Write back to hl ptr if needed.
+        if (dr == 6) {
+            self.writeByte(self.hl, hlr);
+        }
+    }
+};
+
+pub const SaveData = struct {
+    // 8-bit registers
+    af: u16,
+    bc: u16,
+    de: u16,
+    hl: u16,
+    af_: u16,
+    bc_: u16,
+    de_: u16,
+    hl_: u16,
+
+    // 16-bit registers
+    pc: u16,
+    sp: u16,
+
+    // Index registers
+    ix: u16,
+    iy: u16,
+
+    // Other regisers
+    i: u8, // Interrupt vector
+    r: u8, // Memory refresh
+
+    // Interrupt handling
+    iff1: bool, // Interrupt flip-flop 1
+    iff2: bool, // Interrupt flip-flop 2
+    im: u8, // Interrupt mode
+
+    // Memory (for simplicity, let's assume 64KB)
+    memory: []u8,
+
+    // Internal state
+    cycles: u64,
+
+    // Pending opcode
+    pending_opcode: ?u8,
 };
 
 pub const Flag = struct {
@@ -2993,7 +3496,8 @@ fn ix__bit(self: *Z80) void {
     const next_byte = self.peekByte();
     const ix_bit_instruction = IX_BIT_TABLE[next_byte];
     if (ix_bit_instruction == null) {
-        std.debug.print("Unhandled 0xDD 0xCB {X:0>2}\n", .{self.peekByte()});
+        self.saveState("/tmp/cpu.json");
+        std.debug.panic("Unhandled 0xDD 0xCB {X:0>2}\n", .{next_byte});
         self.cycles += 4;
         self.execute();
     } else {
@@ -3007,13 +3511,34 @@ fn iy__bit(self: *Z80) void {
     const next_byte = self.peekByte();
     const iy_bit_instruction = IY_BIT_TABLE[next_byte];
     if (iy_bit_instruction == null) {
-        std.debug.print("Unhandled 0xFD 0xCB {X:0>2}\n", .{self.peekByte()});
+        self.saveState("/tmp/cpu.json");
+        std.debug.panic("Unhandled 0xFD 0xCB {X:0>2}\n", .{next_byte});
         self.cycles += 4;
         self.execute();
     } else {
         _ = self.fetchOpcode();
         _ = iy_bit_instruction.?(self);
     }
+}
+
+// 0xDD and 0xFD 0xCB - Bit Instructions
+
+fn rlcixdc(self: *Z80) void {
+    // 0xDD 0xCB 0x01 RLC (IX+d), d
+    const d = self.fetchByte();
+    const res = self.rlc(self.memory[self.ix + d]);
+    self.writeByte(self.ix + d, res);
+    self.setC(res);
+    self.cycles += 23;
+}
+
+fn rlciydc(self: *Z80) void {
+    // 0xFD 0xCB 0x01 RLC (IY+d), d
+    const d = self.fetchByte();
+    const res = self.rlc(self.memory[self.iy + d]);
+    self.writeByte(self.iy + d, res);
+    self.setC(res);
+    self.cycles += 23;
 }
 
 // 0xDD
@@ -3031,8 +3556,8 @@ const IX_TABLE: [256]?*const fn (*Z80) void = .{
     _______, _______, _______, _______, sub_ixh, sub_ixl, subaixd, _______, _______, _______, _______, _______, sbcaixh, sbcaixl, sbcaiyd, _______, // 9
     _______, _______, _______, _______, and_ixh, and_ixl, and_ixd, _______, _______, _______, _______, _______, xor_ixh, xor_ixl, xor_ixd, _______, // A
     _______, _______, _______, _______, ori__xh, ori__xl, or__ixd, _______, _______, _______, _______, _______, cp__ixh, cp__ixl, cp__ixd, _______, // B
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, ix__bit, _______, _______, _______, _______, // D
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, ix__bit, _______, _______, _______, _______, // C
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
     _______, pop__ix, _______, _______, _______, push_ix, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // F
 };
@@ -3052,36 +3577,16 @@ const IY_TABLE: [256]?*const fn (*Z80) void = .{
     _______, _______, _______, _______, sub_iyh, sub_iyl, subaiyd, _______, _______, _______, _______, _______, sbcaiyh, sbcaiyl, sbcaiyd, _______, // 9
     _______, _______, _______, _______, and_ixh, and_ixl, and_iyd, _______, _______, _______, _______, _______, xor_iyh, xor_iyl, xor_iyd, _______, // A
     _______, _______, _______, _______, or__iyh, or__iyl, or__iyd, _______, _______, _______, _______, _______, cp__iyh, cp__iyl, cp__iyd, _______, // B
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, iy__bit, _______, _______, _______, _______, // D
-    _______, pop__iy, _______, _______, _______, push_iy, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // F
-};
-
-const BIT_TABLE: [256]?*const fn (*Z80) void = .{
-    // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 0
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 1
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 2
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 3
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 4
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 5
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 6
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 7
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 8
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 9
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // A
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // B
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // C
+    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, iy__bit, _______, _______, _______, _______, // C
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
+    _______, pop__iy, _______, _______, _______, push_iy, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // F
 };
 
 // 0xDD 0xCB
 const IX_BIT_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 0
+    _______, rlcixdc, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 0
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 1
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 2
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 3
@@ -3102,7 +3607,7 @@ const IX_BIT_TABLE: [256]?*const fn (*Z80) void = .{
 // 0xFD 0xCB
 const IY_BIT_TABLE: [256]?*const fn (*Z80) void = .{
     // 0,    1,       2,       3,       4,       5,       6,       7,       8,       9,       A,       B,       C,       D,       E,       F
-    _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 0
+    _______, rlciydc, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 0
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 1
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 2
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // 3
@@ -3118,4 +3623,25 @@ const IY_BIT_TABLE: [256]?*const fn (*Z80) void = .{
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // D
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // E
     _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, _______, // F
+};
+
+// CB Cycles Table
+const CB_CYCLES_TABLE: [256]u8 = .{
+    //0,   1,   2,   3,   4,   5,   6,   7,   8,   9,   A,   B,   C,   D,   E,   F
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 0
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 1
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 2
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 3
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 4
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 5
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 6
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 7
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 8
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // 9
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // A
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // B
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // C
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // D
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // E
+    0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0x8, 0xF, 0x8, // F
 };

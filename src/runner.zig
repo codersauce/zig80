@@ -172,9 +172,9 @@ pub fn runTest(alloc: Allocator, path: []const u8) !void {
         cpu.clearMemory();
         assignState(Z80, &cpu, t.initialValue);
 
-        const regs = try cpu.dumpState(alloc);
+        const regs = try cpu.dumpState();
         defer alloc.free(regs);
-        const memory = try cpu.dumpMemory(alloc);
+        const memory = try cpu.dumpMemory();
         defer alloc.free(memory);
         std.debug.print("CPU before: {s}\n", .{regs});
         std.debug.print("Memory before:\n{s}", .{memory});

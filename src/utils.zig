@@ -148,6 +148,11 @@ pub fn showMismatch(alloc: Allocator, m1: []const u8, m2: []const u8) void {
     }
 }
 
+/// Sets the n-th bit of an u8
+pub fn setBit(n: u3, val: u8) u8 {
+    return val | (@as(u8, 1) << n);
+}
+
 pub fn bit(n: u5, value: u16) bool {
     return (value & (@as(i32, 1) << n)) != 0;
 }
@@ -155,4 +160,12 @@ pub fn bit(n: u5, value: u16) bool {
 pub fn carry(n: u5, a: u16, b: u16, cy: bool) bool {
     const cy_: u8 = if (cy) 1 else 0;
     return bit(n, (a + b + cy_) ^ a ^ b);
+}
+
+pub fn hi(value: u16) u8 {
+    return @as(u8, @intCast(value >> 8));
+}
+
+pub fn lo(value: u16) u8 {
+    return @as(u8, @intCast(value & 0xFF));
 }

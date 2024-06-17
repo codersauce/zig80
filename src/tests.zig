@@ -38,11 +38,14 @@ pub const Options = struct {
     @"test": ?u32,
     /// Compares each step with the benchmark emulator (Z80.c).
     compare: bool,
+    /// Loads a save state before running the test.
+    load: ?[]const u8,
 
     pub fn init() Options {
         return Options{
             .@"test" = null,
             .compare = false,
+            .load = null,
         };
     }
 
@@ -60,7 +63,10 @@ pub const TestOptions = struct {
 pub fn run(alloc: Allocator, options: Options) !void {
     try downloadAndExtract(alloc);
 
-    var cpu = Z80.init();
+    var cpu = Z80.init(alloc);
+    if (options.load) |load| {
+        try cpu.loadState(load);
+    }
 
     const test_num = options.@"test";
     if (test_num != null) {
@@ -68,18 +74,18 @@ pub fn run(alloc: Allocator, options: Options) !void {
             return std.debug.panic("test number must be greater than 0\n", .{});
         }
         std.debug.print("running test: {d}\n", .{test_num.? - 1});
-        try runTest(alloc, &cpu, Tests[test_num.? - 1], options.toTestOptions());
+        try runTest(alloc, &cpu, Tests[test_num.? - 1], options.toTestOptions(), options.load == null);
         return;
     }
 
     for (Tests, 0..) |t, i| {
         if (i >= 0) {
-            try runTest(alloc, &cpu, t, options.toTestOptions());
+            try runTest(alloc, &cpu, t, options.toTestOptions(), true);
         }
     }
 }
 
-pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test, options: TestOptions) !void {
+pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test, options: TestOptions, reset: bool) !void {
     var bench_cpu = c.Z80{};
 
     if (options.compare) {
@@ -103,12 +109,16 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test, options: TestOptions) !void
         bench_cpu.halt = cpuHalt;
     }
 
-    cpu.reset();
-    try loadTest(alloc, cpu, &bench_cpu, t, options);
-    if (t.archive_name != null) {
-        std.debug.print("running test: {s}/{s}\n", .{ t.archive_name.?, t.file_path });
+    if (reset) {
+        cpu.reset();
+        try loadTest(alloc, cpu, &bench_cpu, t, options);
+        if (t.archive_name) |name| {
+            std.debug.print("running test: {s}/{s}\n", .{ name, t.file_path });
+        } else {
+            std.debug.print("running test: {s}\n", .{t.file_path});
+        }
     } else {
-        std.debug.print("running test: {s}\n", .{t.file_path});
+        std.debug.print("starting with pc = {X:0>4}\n", .{cpu.pc});
     }
 
     while (!cpu.isHalted()) {
@@ -365,7 +375,7 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
         bench_state_bef = try dumpCpuState(alloc, bench_cpu);
         defer alloc.free(bench_state_bef);
 
-        cpu_state_bef = try cpu.dumpState(alloc);
+        cpu_state_bef = try cpu.dumpState();
         defer alloc.free(cpu_state_bef);
     }
 
@@ -407,7 +417,7 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
         const bench_state = try dumpCpuState(alloc, bench_cpu);
         defer alloc.free(bench_state);
 
-        const cpu_state = try cpu.dumpState(alloc);
+        const cpu_state = try cpu.dumpState();
         defer alloc.free(cpu_state);
 
         if (!try compare(alloc, cpu, bench_cpu)) {
