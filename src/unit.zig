@@ -21,7 +21,7 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    var options = Options{ .benchmark = true };
+    var options = Options{ .benchmark = false };
     if (!try cli.parse(args, Options, &options)) {
         return;
     }
