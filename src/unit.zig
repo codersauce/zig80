@@ -33,36 +33,10 @@ pub fn main() !void {
     defer results.deinit();
 
     if (options.benchmark) {
-        var cpu = c.Z80{};
         for (tests.value, 0..) |t, n| {
-            var memory = [_]u8{0} ** 0x10000;
-            loadBench(&cpu, t, &memory);
-            std.debug.print("Running test '{s}'...\n", .{t.name});
-
-            const read = struct {
-                fn read(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
-                    const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
-                    return mem[address];
-                }
-            }.read;
-
-            const write = struct {
-                fn write(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
-                    const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
-                    mem[address] = value;
-                }
-            }.write;
-
-            cpu.read = read;
-            cpu.fetch = read;
-            cpu.write = write;
-            cpu.fetch_opcode = read;
-            cpu.context = &memory;
-            _ = c.z80_run(&cpu, 1);
-
-            compareBenchResult(&cpu, results.value[n], &memory);
+            const r = results.value[n];
+            runBenchmark(t, r);
         }
-        // runBenchmark(alloc, tests.value, results.value);
         return;
     }
 
@@ -78,17 +52,52 @@ pub fn main() !void {
     }
 }
 
-fn runBenchmark(alloc: Allocator, tests: []TestCase, results: []TestResult) void {
-    _ = alloc;
+fn runBenchmark(t: TestCase, result: TestResult) void {
     var cpu = c.Z80{};
-    for (tests, 0..) |t, n| {
-        var memory = [_]u8{0} ** 0x10000;
-        std.debug.print("Running test '{s}'...\n", .{t.name});
-        loadBench(&cpu, t, &memory);
-        _ = c.z80_run(&cpu, t.state.tStates);
+    var memory = [_]u8{0} ** 0x10000;
+    loadBench(&cpu, t, &memory);
+    std.debug.print("Running test '{s}'...\n", .{t.name});
 
-        compareBenchResult(&cpu, results[n], &memory);
-    }
+    const read = struct {
+        fn read(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+            const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
+            return mem[address];
+        }
+    }.read;
+
+    const write = struct {
+        fn write(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+            const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
+            mem[address] = value;
+        }
+    }.write;
+
+    const writePort = struct {
+        fn writePort(context: ?*anyopaque, port: c_ushort, value: u8) callconv(.C) void {
+            _ = context;
+            std.debug.print("Writing to port 0x{X:0>2}\n", .{port});
+            std.debug.print("  Value: 0x{X:0>2}\n", .{value});
+        }
+    }.writePort;
+
+    const readPort = struct {
+        fn readPort(context: ?*anyopaque, port: c_ushort) callconv(.C) u8 {
+            _ = context;
+            std.debug.print("Reading from port 0x{X:0>2}\n", .{port});
+            return 0;
+        }
+    }.readPort;
+
+    cpu.read = read;
+    cpu.fetch = read;
+    cpu.write = write;
+    cpu.fetch_opcode = read;
+    cpu.in = readPort;
+    cpu.out = writePort;
+    cpu.context = &memory;
+    _ = c.z80_run(&cpu, 1);
+
+    compareBenchResult(&cpu, result, &memory);
 }
 
 fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) void {
