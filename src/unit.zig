@@ -101,7 +101,6 @@ fn runBenchmark(t: TestCase, result: TestResult) void {
 }
 
 fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) void {
-    _ = memory;
     if (result.state.af != cpu.af.uint16_value) {
         std.debug.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af.uint16_value });
         var expected_flag = Flag.init(utils.lo(result.state.afDash));
@@ -184,6 +183,21 @@ fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) voi
     //     std.debug.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
     // }
     //
+
+    if (result.memory) |mem| {
+        for (mem) |m| {
+            const expected = m.data;
+            const actual = memory[m.address .. m.address + expected.len];
+            if (!std.mem.eql(u8, expected, actual)) {
+                std.debug.print("Memory mismatch at 0x{X:0>4}:\n", .{m.address});
+                for (expected, actual) |e, a| {
+                    if (e != a) {
+                        std.debug.print("  Expected 0x{X:0>2}, got 0x{X:0>2}\n", .{ e, a });
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn loadBench(cpu: *c.Z80, t: TestCase, memory: *[0x10000]u8) void {
