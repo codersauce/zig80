@@ -422,6 +422,25 @@ pub const Z80 = struct {
         return v;
     }
 
+    // SI void addiz(u16 * reg, u16 val) {
+    //   bv nsf = sf; bv nzf = zf; bv npf = pf;
+    //   *reg = add16(*reg, val, 0);
+    //   sf = nsf; zf = nzf; pf = npf;
+    // }
+
+    /// Add a word to a native 16-bit register.
+    pub fn addiz(self: *Z80, reg: *u16, val: u16) void {
+        const nsf = self.isSign();
+        const nzf = self.isZero();
+        const npf = self.isParityOverflow();
+
+        reg.* = self.add16n(reg.*, val, false);
+
+        self.setSign(nsf);
+        self.setZero(nzf);
+        self.setParityOverflow(npf);
+    }
+
     // SI u16 add16(u16 a, u16 b, bv cy) {
     //   u8 lo = add8(a, b, cy);
     //
@@ -880,6 +899,29 @@ pub const Z80 = struct {
 
         self.pc = address;
         self.cycles += 11;
+    }
+
+    pub fn pop(self: *Z80) u16 {
+        const low = self.memory[self.sp];
+        self.incSP();
+        const high = self.memory[self.sp];
+        self.incSP();
+        return utils.u16FromBytes(low, high);
+    }
+
+    pub fn push(self: *Z80, v: u16) void {
+        const low = utils.lo(v);
+        self.decSP();
+        self.writeByte(self.sp, low);
+
+        const high = utils.hi(v);
+        self.decSP();
+        self.writeByte(self.sp, high);
+    }
+
+    fn jmp(self: *Z80, address: u16) void {
+        self.wz = address;
+        self.pc = address;
     }
 
     fn incR(self: *Z80) void {
@@ -2365,19 +2407,20 @@ pub const Z80 = struct {
             },
             0xDD => {
                 // IY Extended Instructions
-                const next_byte = self.peekByte();
-                // std.debug.print("0xDD next_byte = {X:0>2}\n", .{next_byte});
-                const ix_instruction = IX_TABLE[next_byte];
-                if (ix_instruction == null) {
-                    self.saveState("/tmp/cpu.json");
-                    std.debug.panic("Unhandled 0xDD {X:0>2}\n", .{next_byte});
-                    self.cycles += 4;
-                    self.execute();
-                } else {
-                    _ = self.fetchOpcode();
-                    _ = ix_instruction.?(self);
-                    // std.debug.print("IX instruction: {any} {any}\n", .{ res, ix_instruction });
-                }
+                self.exec_ind(self.fetchByte(), &self.ix);
+                // const next_byte = self.peekByte();
+                // // std.debug.print("0xDD next_byte = {X:0>2}\n", .{next_byte});
+                // const ix_instruction = IX_TABLE[next_byte];
+                // if (ix_instruction == null) {
+                //     self.saveState("/tmp/cpu.json");
+                //     std.debug.panic("Unhandled 0xDD {X:0>2}\n", .{next_byte});
+                //     self.cycles += 4;
+                //     self.execute();
+                // } else {
+                //     _ = self.fetchOpcode();
+                //     _ = ix_instruction.?(self);
+                //     // std.debug.print("IX instruction: {any} {any}\n", .{ res, ix_instruction });
+                // }
             },
             0xDE => {
                 // SBC A, n
@@ -2777,8 +2820,8 @@ pub const Z80 = struct {
                 self.rst(0x38);
             },
             else => |code| {
-                std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
                 self.saveState("/tmp/cpu.json");
+                std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
             },
         }
     }
@@ -2878,7 +2921,7 @@ pub const Z80 = struct {
 
                 // Odd edge case. See the WZ comment.
                 if (da == 6) {
-                    self.setXYFromU8(utils.hi(self.wl));
+                    self.setXYFromU8(utils.hi(self.wz));
                 }
             },
             2 => setReg(self, getReg(self) & ~(@as(u8, 1) << da)),
@@ -2889,6 +2932,129 @@ pub const Z80 = struct {
         // Write back to hl ptr if needed.
         if (dr == 6) {
             self.writeByte(self.hl, hlr);
+        }
+    }
+
+    fn exec_ind(self: *Z80, opcode: u8, ir: *u16) void {
+        self.incR();
+
+        switch (opcode) {
+            // Stack operations.
+            0xE1 => {
+                // POP IX
+                ir.* = self.pop();
+                self.cycles += 14;
+            },
+            0xE5 => {
+                // PUSH IX
+                self.push(ir.*);
+                self.cycles += 15;
+            },
+
+            // Jumps.
+            0xE9 => {
+                // JP (IX)
+                self.jmp(ir.*);
+                self.cycles += 8;
+            },
+
+            // Arithmetics.
+            0x09 => {
+                // ADD IX, BC
+                self.addiz(ir, self.bc);
+                self.cycles += 15;
+            },
+            0x19 => {
+                // ADD IX, DE
+                self.addiz(ir, self.de);
+                self.cycles += 15;
+            },
+            0x29 => {
+                // ADD IX, IX
+                self.addiz(ir, ir.*);
+                self.cycles += 15;
+            },
+            0x39 => {
+                // ADD IX, SP
+                self.addiz(ir, self.sp);
+                self.cycles += 15;
+            },
+
+            // Hi/lo math.
+            // add/adc a, IHI/ILO
+            0x84 => {
+                // ADD A, IYH
+                self.setA(self.add8(self.getA(), utils.hi(ir.* >> 8), false));
+                self.cycles += 4;
+            },
+            0x85 => {
+                // ADD A, IYL
+                self.setA(self.add8(self.getA(), utils.lo(ir.* >> 8), false));
+                self.cycles += 4;
+            },
+            0x8C => {
+                // ADC A, IYH
+                self.setA(self.add8(self.getA(), utils.hi(ir.* >> 8), self.isCarry()));
+                self.cycles += 1;
+            },
+            0x8D => {
+                // ADC A, IYL
+                self.setA(self.add8(self.getA(), utils.lo(ir.* >> 8), self.isCarry()));
+                self.cycles += 1;
+            },
+
+            // add/adc/sub/sbc a, byte *(ir + imm)
+            0x86 => {
+                // ADD A, (IX+d)
+                self.setA(self.add8(self.getA(), self.memory[self.fetchByte() + ir.*], false));
+                self.cycles += 19;
+            },
+            0x8E => {
+                // ADC A, (IX+d)
+                self.setA(self.add8(self.getA(), self.memory[self.fetchByte() + ir.*], self.isCarry()));
+                self.cycles += 19;
+            },
+            0x96 => {
+                // SUB A, (IX+d)
+                self.setA(self.sub8(self.getA(), self.memory[self.fetchByte() + ir.*], false));
+                self.cycles += 19;
+            },
+            0x9E => {
+                // SBC A, (IX+d)
+                self.setA(self.sub8(self.getA(), self.memory[self.fetchByte() + ir.*], self.isCarry()));
+                self.cycles += 19;
+            },
+
+            // sub/sbc a, IHI/ILO
+            0x94 => {
+                // SUB A, IYH
+                self.setA(self.sub8(self.getA(), utils.hi(ir.* >> 8), false));
+                self.cycles += 4;
+            },
+            0x95 => {
+                // SUB A, IYL
+                self.setA(self.sub8(self.getA(), utils.lo(ir.* >> 8), false));
+                self.cycles += 4;
+            },
+            0x9C => {
+                // SBC A, IYH
+                self.setA(self.sub8(self.getA(), utils.hi(ir.* >> 8), self.isCarry()));
+                self.cycles += 4;
+            },
+            0x9D => {
+                // SBC A, IYL
+                self.setA(self.sub8(self.getA(), utils.lo(ir.* >> 8), self.isCarry()));
+                self.cycles += 4;
+            },
+            0xA6 | 0xA4 | 0xA5 => {},
+            0xAE | 0xAC | 0xAD => {},
+            0xB6 | 0xB4 | 0xB5 => {},
+            0xBE | 0xBC | 0xBD => {},
+            else => {
+                // std.debug.panic("Unknown IY/IX opcode: {0X:0>2}", .{opcode});
+                self.executeOpcode(opcode);
+                self.r = self.r & 0x80 | (self.r + 1) & 0x7F;
+            },
         }
     }
 };
