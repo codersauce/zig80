@@ -35,7 +35,7 @@ pub const Z80 = struct {
 
     // "WZ" register.
     // https://www.grimware.org/lib/exe/fetch.php/documentations/devices/z80/z80.memptr.eng.txt
-    wl: u16,
+    wz: u16,
 
     // Memory (for simplicity, let's assume 64KB)
     memory: [65536]u8,
@@ -93,7 +93,7 @@ pub const Z80 = struct {
             .im = 0,
             .iff1 = false,
             .iff2 = false,
-            .wl = 0,
+            .wz = 0,
             .memory = memory,
             .cycles = cycles,
             .halt = false,
@@ -126,7 +126,7 @@ pub const Z80 = struct {
         self.cycles = 0;
         self.halt = false;
         self.pending_opcode = null;
-        self.wl = 0;
+        self.wz = 0;
         // self.write = null;
         // self.hook = null;
         // self.out = null;
@@ -434,7 +434,7 @@ pub const Z80 = struct {
         const res: u16 = @as(u16, @intCast(self.add8(@as(u8, @intCast(a >> 8)), @as(u8, @intCast(b >> 8)), self.isCarry()))) << 8 | lo;
         var flags = self.getFlag();
         flags.setZero(res == 0);
-        // wz = a + 1
+        self.wz = a + 1;
         return res;
     }
 
@@ -450,7 +450,7 @@ pub const Z80 = struct {
         const res: u16 = @as(u16, @intCast(self.sub8(@as(u8, @intCast(a >> 8)), @as(u8, @intCast(b >> 8)), self.isCarry()))) << 8 | lo;
         var flags = self.getFlag();
         flags.setZero(res == 0);
-        // wz = a + 1
+        self.wz = a + 1;
         return res;
     }
 
