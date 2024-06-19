@@ -3,9 +3,9 @@ const Allocator = std.mem.Allocator;
 
 const Cli = struct {
     test_name: []const u8,
-    other_test_name: ?[]const u8,
-    opt_env: ?[]const u8,
-    opt_benchmark: bool,
+    other_test_name: ?[]const u8 = null,
+    opt_env: ?[]const u8 = null,
+    opt_benchmark: bool = false,
 
     pub const field_info = std.enums.EnumFieldStruct(std.meta.FieldEnum(@This()), ?[]const u8, @as(?[]const u8, null)){
         .test_name = "name of the test to run",
@@ -32,6 +32,7 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
 
     switch (@typeInfo(T)) {
         .Struct => |info| {
+            var fields_seen = [_]bool{false} ** info.fields.len;
             var it = ArgIterator.init(args);
             var pos: usize = 0;
 
@@ -44,13 +45,14 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
                 const arg = arg_try.?;
                 std.debug.print("Arg: {s}\n", .{arg});
                 if (std.mem.startsWith(u8, arg, "--")) {
-                    inline for (info.fields) |field| {
+                    inline for (info.fields, 0..) |field, i| {
                         if (std.mem.startsWith(u8, field.name, "opt_")) {
                             std.debug.print("Field: {s}\n", .{field.name});
                             if (std.mem.eql(u8, arg[2..], field.name[4..])) {
                                 std.debug.print("Matched: {s} {s}\n", .{ arg, field.name });
                                 switch (field.type) {
                                     []const u8 => {
+                                        fields_seen[i] = true;
                                         const value = it.next();
                                         if (value == null) {
                                             return error.InvalidParam;
@@ -59,6 +61,7 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
                                         @field(r, field.name) = value.?;
                                     },
                                     ?[]const u8 => {
+                                        fields_seen[i] = true;
                                         const value = it.next();
                                         if (value == null) {
                                             return error.InvalidParam;
@@ -76,14 +79,16 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
                     }
                 } else {
                     var fpos: u8 = 0;
-                    inline for (info.fields) |field| {
+                    inline for (info.fields, 0..) |field, i| {
                         if (!std.mem.startsWith(u8, field.name, "opt_")) {
                             if (fpos == pos) {
                                 switch (field.type) {
                                     []const u8 => {
+                                        fields_seen[i] = true;
                                         @field(r, field.name) = arg;
                                     },
                                     ?[]const u8 => {
+                                        fields_seen[i] = true;
                                         @field(r, field.name) = arg;
                                     },
                                     else => {
@@ -98,6 +103,7 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
                     pos += 1;
                 }
             }
+            try fillDefaultStructValues(T, &r, &fields_seen);
         },
         else => |info| {
             std.debug.print("Unsupported type: {any}\n", .{info});
@@ -105,6 +111,19 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
     }
 
     return r;
+}
+fn fillDefaultStructValues(comptime T: type, r: *T, fields_seen: *[@typeInfo(T).Struct.fields.len]bool) !void {
+    inline for (@typeInfo(T).Struct.fields, 0..) |field, i| {
+        if (!fields_seen[i]) {
+            if (field.default_value) |default_ptr| {
+                const default = @as(*align(1) const field.type, @ptrCast(default_ptr)).*;
+                @field(r, field.name) = default;
+            } else {
+                std.debug.print("Missing field: {s}\n", .{field.name});
+                return error.MissingField;
+            }
+        }
+    }
 }
 
 const ArgIterator = struct {
