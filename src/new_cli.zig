@@ -69,6 +69,10 @@ pub fn parse(comptime T: type, args: [][]const u8) !T {
                                         std.debug.print("Setting {s} to {s}\n", .{ field.name, value.? });
                                         @field(r, field.name) = value.?;
                                     },
+                                    bool => {
+                                        fields_seen[i] = true;
+                                        @field(r, field.name) = true;
+                                    },
                                     else => {
                                         std.debug.print("Unsupported type: {any}\n", .{field.type});
                                         // return error.UnsupportedType;
@@ -156,12 +160,12 @@ const ArgIterator = struct {
 
 test "parse with positional arguments" {
     std.debug.print("Test: parse with positional arguments\n", .{});
-    var args = [_][]const u8{ "command_name", "test-01", "--env", "production", "--bench" };
+    var args = [_][]const u8{ "command_name", "test-01", "--env", "production", "--benchmark" };
 
     const actual = try parse(Cli, &args);
     std.debug.print("{any}\n", .{actual});
     const expected = Cli{
-        .test_name = "test",
+        .test_name = "test-01",
         .other_test_name = null,
         .opt_env = "production",
         .opt_benchmark = true,
