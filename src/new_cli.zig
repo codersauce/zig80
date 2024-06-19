@@ -1,0 +1,284 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const Cli = struct {
+    test_name: []const u8,
+    other_test_name: []const u8,
+    opt_env: ?[]const u8,
+    opt_benchmark: bool,
+
+    pub const field_info = std.enums.EnumFieldStruct(std.meta.FieldEnum(@This()), ?[]const u8, @as(?[]const u8, null)){
+        .test_name = "name of the test to run",
+        .other_test_name = "name of the other test to run",
+        .opt_benchmark = "runs the test on the benchmark emulator",
+        .opt_env = "environment to run the test in",
+    };
+};
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    defer _ = gpa.deinit();
+
+    const alloc = gpa.allocator();
+
+    const args = try std.process.argsAlloc(alloc);
+    defer std.process.argsFree(alloc, args);
+
+    try help_for(Cli, std.io.getStdOut().writer());
+}
+
+pub fn help_for(comptime T: type, writer: anytype) !void {
+    const fields = std.meta.fields(T);
+    var it = std.process.args();
+    const program_name = std.fs.path.basename(it.next().?);
+
+    var max_option_len: u32 = 0;
+    var max_arg_len: u32 = 0;
+    inline for (fields) |field| {
+        if (std.mem.startsWith(u8, field.name, "opt_")) {
+            max_option_len = @max(max_option_len, field.name.len - 4);
+        } else {
+            max_arg_len = @max(max_arg_len, field.name.len);
+        }
+    }
+
+    //--- Usage
+    try writer.print("Usage: {s}", .{program_name});
+    var optionals = false;
+    inline for (fields) |field| {
+        if (std.mem.startsWith(u8, field.name, "opt_")) {
+            if (@typeInfo(field.type) == .Optional or field.type == bool) {
+                optionals = true;
+            } else {
+                try writer.print(" --{s}", .{field.name[4..]});
+                if (field.type != bool) {
+                    try writer.print(" <", .{});
+                    for (field.name[4..]) |c| {
+                        try writer.print("{c}", .{std.ascii.toUpper(c)});
+                    }
+                    try writer.print(">", .{});
+                }
+            }
+        } else {
+            if (@typeInfo(field.type) == .Optional or field.type == bool) {
+                try writer.print(" [", .{});
+            } else {
+                try writer.print(" <", .{});
+            }
+            for (field.name) |c| {
+                try writer.print("{c}", .{std.ascii.toUpper(c)});
+            }
+            if (@typeInfo(field.type) == .Optional) {
+                try writer.print("]", .{});
+            } else {
+                try writer.print(">", .{});
+            }
+        }
+    }
+
+    //--- Options
+    if (optionals) {
+        try writer.print(" [OPTIONS]\n\nOptions:", .{});
+
+        inline for (fields) |field| {
+            if (std.mem.startsWith(u8, field.name, "opt_")) {
+                try writer.print("\n  --{s}", .{field.name[4..]});
+
+                if (field.type != bool) {
+                    if (@typeInfo(field.type) == .Optional) {
+                        try writer.print(" [", .{});
+                    } else {
+                        try writer.print(" <", .{});
+                    }
+
+                    for (field.name[4..]) |c| {
+                        try writer.print("{c}", .{std.ascii.toUpper(c)});
+                    }
+
+                    if (@typeInfo(field.type) == .Optional) {
+                        try writer.print("]", .{});
+                    } else {
+                        try writer.print(">", .{});
+                    }
+                }
+
+                if (@hasDecl(T, "field_info")) {
+                    if (@field(T.field_info, field.name)) |info| {
+                        for (0..(max_option_len - (field.name.len - 4))) |_| {
+                            try writer.print(" ", .{});
+                        }
+
+                        try writer.print("  {s}", .{info});
+                    }
+                }
+            }
+        }
+    }
+
+    if (@hasDecl(T, "field_info")) {
+        try writer.print("\n\nArguments:", .{});
+
+        inline for (fields) |field| {
+            if (!std.mem.startsWith(u8, field.name, "opt_")) {
+                if (@typeInfo(field.type) == .Optional) {
+                    try writer.print("\n  [", .{});
+                } else {
+                    try writer.print("\n  <", .{});
+                }
+                for (field.name) |c| {
+                    try writer.print("{c}", .{std.ascii.toUpper(c)});
+                }
+
+                if (@typeInfo(field.type) == .Optional) {
+                    try writer.print("]", .{});
+                } else {
+                    try writer.print(">", .{});
+                }
+
+                if (@field(T.field_info, field.name)) |info| {
+                    for (0..(max_arg_len - field.name.len)) |_| {
+                        try writer.print(" ", .{});
+                    }
+
+                    try writer.print("  {s}", .{info});
+                }
+            }
+        }
+    }
+
+    try writer.print("\n", .{});
+}
+
+test "help message with positional arguments" {
+    const Params = struct {
+        param_a: []const u8,
+        param_b: []const u8,
+    };
+
+    const expected =
+        \\Usage: test <PARAM_A> <PARAM_B>
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with positional arguments with field info" {
+    const Params = struct {
+        param_a: []const u8,
+        param_b: []const u8,
+
+        pub const field_info = std.enums.EnumFieldStruct(std.meta.FieldEnum(@This()), ?[]const u8, @as(?[]const u8, null)){
+            .param_a = "a info",
+            .param_b = "b info",
+        };
+    };
+
+    const expected =
+        \\Usage: test <PARAM_A> <PARAM_B>
+        \\
+        \\Arguments:
+        \\  <PARAM_A>  a info
+        \\  <PARAM_B>  b info
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with arguments" {
+    const Params = struct {
+        opt_two: []const u8,
+        opt_one: []const u8,
+    };
+
+    const expected =
+        \\Usage: test --two <TWO> --one <ONE>
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with boolean argument" {
+    const Params = struct {
+        opt_flag: bool,
+        opt_one: []const u8,
+    };
+
+    const expected =
+        \\Usage: test --one <ONE> [OPTIONS]
+        \\
+        \\Options:
+        \\  --flag
+        \\  --one <ONE>
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with mandatory and optional arguments" {
+    const Params = struct {
+        opt_two: []const u8,
+        opt_one: []const u8,
+        opt_name: ?[]const u8,
+    };
+
+    const expected =
+        \\Usage: test --two <TWO> --one <ONE> [OPTIONS]
+        \\
+        \\Options:
+        \\  --two <TWO>
+        \\  --one <ONE>
+        \\  --name [NAME]
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with positional and non-positional arguments" {
+    const Params = struct {
+        name: []const u8,
+        opt_height: u32,
+        opt_flag: bool,
+        opt_age: ?u32,
+    };
+
+    const expected =
+        \\Usage: test <NAME> --height <HEIGHT> [OPTIONS]
+        \\
+        \\Options:
+        \\  --height <HEIGHT>
+        \\  --flag
+        \\  --age [AGE]
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
