@@ -36,7 +36,12 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     var max_arg_len: u32 = 0;
     inline for (fields) |field| {
         if (std.mem.startsWith(u8, field.name, "opt_")) {
-            max_option_len = @max(max_option_len, field.name.len - 4);
+            if (field.type == bool) {
+                max_option_len = @max(max_option_len, field.name.len - 4);
+            } else {
+                // twice the field name for the argument, plus 1 for space and 2 for brackets
+                max_option_len = @max(max_arg_len, (field.name.len - 4) * 2 + 3);
+            }
         } else {
             max_arg_len = @max(max_arg_len, field.name.len);
         }
@@ -104,7 +109,11 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
 
                 if (@hasDecl(T, "field_info")) {
                     if (@field(T.field_info, field.name)) |info| {
-                        for (0..(max_option_len - (field.name.len - 4))) |_| {
+                        var len = field.name.len - 4;
+                        if (field.type != bool) {
+                            len = (field.name.len - 4) * 2 + 3;
+                        }
+                        for (0..(max_option_len - len)) |_| {
                             try writer.print(" ", .{});
                         }
 
@@ -116,10 +125,13 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     }
 
     if (@hasDecl(T, "field_info")) {
-        try writer.print("\n\nArguments:", .{});
-
+        var header = true;
         inline for (fields) |field| {
             if (!std.mem.startsWith(u8, field.name, "opt_")) {
+                if (header) {
+                    header = false;
+                    try writer.print("\n\nArguments:", .{});
+                }
                 if (@typeInfo(field.type) == .Optional) {
                     try writer.print("\n  [", .{});
                 } else {
@@ -273,6 +285,36 @@ test "help message with positional and non-positional arguments" {
         \\  --height <HEIGHT>
         \\  --flag
         \\  --age [AGE]
+        \\
+    ;
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with arguments and field info" {
+    const Params = struct {
+        opt_env: []const u8,
+        opt_bench: bool,
+        opt_name: ?[]const u8,
+
+        pub const field_info = std.enums.EnumFieldStruct(std.meta.FieldEnum(@This()), ?[]const u8, @as(?[]const u8, null)){
+            .opt_env = "test environment",
+            .opt_bench = "run the test as a benchmark",
+            .opt_name = "name info",
+        };
+    };
+
+    const expected =
+        \\Usage: test --env <ENV> [OPTIONS]
+        \\
+        \\Options:
+        \\  --env <ENV>    test environment
+        \\  --bench        run the test as a benchmark
+        \\  --name [NAME]  name info
         \\
     ;
     var l = std.ArrayList(u8).init(std.testing.allocator);
