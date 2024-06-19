@@ -115,6 +115,10 @@ pub fn countSetBits(v: u8) u32 {
     return count;
 }
 
+pub fn parity(v: u8) bool {
+    return countSetBits(v) % 2 == 0;
+}
+
 pub fn dumpMemoryWithPointer(memory: []const u8, pc: u16, range: u8) void {
     for (0..range) |i| {
         const j: i16 = @intCast(i);
