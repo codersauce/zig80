@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 
 const Cli = struct {
     test_name: []const u8,
-    other_test_name: []const u8,
+    other_test_name: ?[]const u8,
     opt_env: ?[]const u8,
     opt_benchmark: bool,
 
@@ -25,6 +25,130 @@ pub fn main() !void {
     defer std.process.argsFree(alloc, args);
 
     try help_for(Cli, std.io.getStdOut().writer());
+}
+
+pub fn parse(comptime T: type, args: [][]const u8) !T {
+    var r: T = undefined;
+
+    switch (@typeInfo(T)) {
+        .Struct => |info| {
+            var it = ArgIterator.init(args);
+            var pos: usize = 0;
+
+            while (true) {
+                const arg_try = it.next();
+                if (arg_try == null) {
+                    break;
+                }
+
+                const arg = arg_try.?;
+                std.debug.print("Arg: {s}\n", .{arg});
+                if (std.mem.startsWith(u8, arg, "--")) {
+                    inline for (info.fields) |field| {
+                        if (std.mem.startsWith(u8, field.name, "opt_")) {
+                            std.debug.print("Field: {s}\n", .{field.name});
+                            if (std.mem.eql(u8, arg[2..], field.name[4..])) {
+                                std.debug.print("Matched: {s} {s}\n", .{ arg, field.name });
+                                switch (field.type) {
+                                    []const u8 => {
+                                        const value = it.next();
+                                        if (value == null) {
+                                            return error.InvalidParam;
+                                        }
+                                        std.debug.print("Setting {s} to {s}\n", .{ field.name, value.? });
+                                        @field(r, field.name) = value.?;
+                                    },
+                                    ?[]const u8 => {
+                                        const value = it.next();
+                                        if (value == null) {
+                                            return error.InvalidParam;
+                                        }
+                                        std.debug.print("Setting {s} to {s}\n", .{ field.name, value.? });
+                                        @field(r, field.name) = value.?;
+                                    },
+                                    else => {
+                                        std.debug.print("Unsupported type: {any}\n", .{field.type});
+                                        // return error.UnsupportedType;
+                                    },
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    var fpos: u8 = 0;
+                    inline for (info.fields) |field| {
+                        if (!std.mem.startsWith(u8, field.name, "opt_")) {
+                            if (fpos == pos) {
+                                switch (field.type) {
+                                    []const u8 => {
+                                        @field(r, field.name) = arg;
+                                    },
+                                    ?[]const u8 => {
+                                        @field(r, field.name) = arg;
+                                    },
+                                    else => {
+                                        std.debug.print("Unsupported type: {any}\n", .{field.type});
+                                        // return error.UnsupportedType;
+                                    },
+                                }
+                            }
+                            fpos += 1;
+                        }
+                    }
+                    pos += 1;
+                }
+            }
+        },
+        else => |info| {
+            std.debug.print("Unsupported type: {any}\n", .{info});
+        },
+    }
+
+    return r;
+}
+
+const ArgIterator = struct {
+    args: [][]const u8,
+    index: usize,
+
+    fn init(args: [][]const u8) ArgIterator {
+        return ArgIterator{
+            .args = args,
+            .index = 1,
+        };
+    }
+
+    fn next(self: *ArgIterator) ?[]const u8 {
+        if (self.index >= self.args.len) {
+            return null;
+        }
+        const arg = self.args[self.index];
+        self.index += 1;
+        return arg;
+    }
+
+    fn peek(self: *ArgIterator) ?[]const u8 {
+        if (self.index >= self.args.len) {
+            return null;
+        }
+        return self.args[self.index];
+    }
+};
+
+test "parse with positional arguments" {
+    std.debug.print("Test: parse with positional arguments\n", .{});
+    var args = [_][]const u8{ "command_name", "test-01", "--env", "production", "--bench" };
+
+    const actual = try parse(Cli, &args);
+    std.debug.print("{any}\n", .{actual});
+    const expected = Cli{
+        .test_name = "test",
+        .other_test_name = null,
+        .opt_env = "production",
+        .opt_benchmark = true,
+    };
+
+    try std.testing.expectEqual(expected, actual);
 }
 
 pub fn help_for(comptime T: type, writer: anytype) !void {
