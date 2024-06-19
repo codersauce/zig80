@@ -22,7 +22,13 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    const options = try cli.parse(Options, args);
+    const o = try cli.parse(Options, args);
+
+    if (o == null) {
+        return;
+    }
+
+    const options = o.?;
 
     const tests = try loadTests(alloc);
     const results = try loadTestResults(alloc);

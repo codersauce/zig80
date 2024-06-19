@@ -29,8 +29,15 @@ pub fn main() !void {
     std.debug.print("{any}\n", .{cli});
 }
 
-pub fn parse(comptime T: type, args: [][]const u8) !T {
+pub fn parse(comptime T: type, args: [][]const u8) !?T {
     var r: T = undefined;
+
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help")) {
+            try help_for(T, std.io.getStdOut().writer());
+            return null;
+        }
+    }
 
     switch (@typeInfo(T)) {
         .Struct => |info| {
@@ -171,7 +178,7 @@ test "parse with positional arguments" {
         .opt_benchmark = true,
     };
 
-    try std.testing.expectEqual(expected, actual);
+    try std.testing.expectEqual(expected, actual.?);
 }
 
 test "parse with option missing an argument" {
@@ -191,7 +198,7 @@ test "parse with default values" {
         .opt_benchmark = false,
     };
 
-    try std.testing.expectEqual(expected, actual);
+    try std.testing.expectEqual(expected, actual.?);
 }
 
 test "parse with only optional args" {
@@ -205,10 +212,10 @@ test "parse with only optional args" {
     const actual = try parse(Options, &args);
     const expected = Options{
         .test_name = null,
-        .benchmark = true,
+        .benchmark = false,
     };
 
-    try std.testing.expectEqual(expected, actual);
+    try std.testing.expectEqual(expected, actual.?);
 }
 
 pub fn help_for(comptime T: type, writer: anytype) !void {
@@ -257,7 +264,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
             for (field.name) |c| {
                 try writer.print("{c}", .{std.ascii.toUpper(c)});
             }
-            if (@typeInfo(field.type) == .Optional) {
+            if (@typeInfo(field.type) == .Optional or field.type == bool) {
                 try writer.print("]", .{});
             } else {
                 try writer.print(">", .{});
@@ -506,6 +513,44 @@ test "help message with arguments and field info" {
     defer l.deinit();
 
     try help_for(Params, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with optional positional args" {
+    const Options = struct {
+        test_name: ?[]const u8,
+        benchmark: bool,
+    };
+
+    const expected =
+        \\Usage: test [TEST_NAME] [BENCHMARK]
+        \\
+    ;
+
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Options, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with mandatory and optional positional args" {
+    const Options = struct {
+        test_name: []const u8,
+        benchmark: bool,
+    };
+
+    const expected =
+        \\Usage: test <TEST_NAME> [BENCHMARK]
+        \\
+    ;
+
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Options, l.writer());
 
     try std.testing.expectEqualStrings(expected, l.items);
 }
