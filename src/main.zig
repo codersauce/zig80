@@ -12,10 +12,6 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    var options = tests.Options.init();
-    if (!try cli.parse(args, tests.Options, &options)) {
-        return;
-    }
-
+    const options = try cli.parse(tests.Options, args);
     try tests.run(alloc, options);
 }

@@ -9,6 +9,7 @@ const Z80 = cpu_import.Z80;
 const Flag = cpu_import.Flag;
 
 const Options = struct {
+    test_name: ?[]const u8,
     benchmark: bool,
 };
 
@@ -21,14 +22,9 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    var options = Options{ .benchmark = false };
-    if (!try cli.parse(args, Options, &options)) {
-        return;
-    }
+    const options = try cli.parse(Options, args);
 
     const tests = try loadTests(alloc);
-    defer tests.deinit();
-
     const results = try loadTestResults(alloc);
     defer results.deinit();
 
@@ -43,6 +39,11 @@ pub fn main() !void {
 
     std.debug.print("Running on our emulator...\n", .{});
     for (tests.value, 0..) |t, n| {
+        if (options.test_name) |name| {
+            if (!std.mem.eql(u8, t.name, name)) {
+                continue;
+            }
+        }
         runTest(alloc, t, results.value[n]);
     }
 }
