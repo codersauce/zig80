@@ -344,6 +344,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     //--- Usage
     try writer.print("Usage: {s}", .{program_name});
     var optionals = false;
+    var command = false;
     inline for (fields) |field| {
         if (std.mem.startsWith(u8, field.name, "opt_")) {
             if (@typeInfo(field.type) == .Optional or field.type == bool) {
@@ -359,25 +360,64 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                 }
             }
         } else {
-            if (@typeInfo(field.type) == .Optional or field.type == bool) {
-                try writer.print(" [", .{});
+            if (@typeInfo(field.type) == .Union) {
+                command = true;
+                try writer.print(" <COMMAND>", .{});
             } else {
-                try writer.print(" <", .{});
-            }
-            for (field.name) |c| {
-                try writer.print("{c}", .{std.ascii.toUpper(c)});
-            }
-            if (@typeInfo(field.type) == .Optional or field.type == bool) {
-                try writer.print("]", .{});
-            } else {
-                try writer.print(">", .{});
+                if (@typeInfo(field.type) == .Optional or field.type == bool) {
+                    try writer.print(" [", .{});
+                } else {
+                    try writer.print(" <", .{});
+                }
+                for (field.name) |c| {
+                    try writer.print("{c}", .{std.ascii.toUpper(c)});
+                }
+                if (@typeInfo(field.type) == .Optional or field.type == bool) {
+                    try writer.print("]", .{});
+                } else {
+                    try writer.print(">", .{});
+                }
             }
         }
     }
 
+    if (optionals) {
+        try writer.print(" [OPTIONS]\n", .{});
+    }
+
+    //--- Subcommands
+    if (command) {
+        try writer.print("\nCommands:", .{});
+        inline for (fields) |field| {
+            if (@typeInfo(field.type) == .Union) {
+                const subfields = std.meta.fields(field.type);
+                var max_command_len: u8 = 0;
+
+                inline for (subfields) |subfield| {
+                    max_command_len = @max(max_command_len, subfield.name.len);
+                }
+
+                inline for (subfields, 0..) |subfield, i| {
+                    try writer.print("\n  {s}", .{subfield.name});
+
+                    if (@hasDecl(field.type, "field_info")) {
+                        if (field.type.field_info.len >= i) {
+                            const info = field.type.field_info[i];
+                            for (0..(max_command_len - subfield.name.len)) |_| {
+                                try writer.print(" ", .{});
+                            }
+                            try writer.print("  {s}", .{info});
+                        }
+                    }
+                }
+            }
+        }
+        try writer.print("\n", .{});
+    }
+
     //--- Options
     if (optionals) {
-        try writer.print(" [OPTIONS]\n\nOptions:", .{});
+        try writer.print("\nOptions:", .{});
 
         inline for (fields) |field| {
             if (std.mem.startsWith(u8, field.name, "opt_")) {
@@ -654,6 +694,57 @@ test "help message with mandatory and optional positional args" {
     defer l.deinit();
 
     try help_for(Options, l.writer());
+
+    try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "help message with subcommand" {
+    const TestCmd = struct {
+        name: ?[]const u8,
+        opt_env: ?[]const u8,
+        opt_benchmark: bool,
+    };
+
+    const ShowCmd = struct {
+        name: []const u8,
+    };
+
+    const SubcommandTag = enum {
+        @"test",
+        display,
+    };
+
+    const Subcommand = union(SubcommandTag) {
+        @"test": TestCmd,
+        display: ShowCmd,
+
+        pub const field_info = .{
+            "executes a test",
+            "shows something",
+        };
+    };
+
+    const Cmd = struct {
+        subcommand: Subcommand,
+        opt_verbose: bool,
+    };
+
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Cmd, l.writer());
+
+    const expected =
+        \\Usage: test <COMMAND> [OPTIONS]
+        \\
+        \\Commands:
+        \\  test     executes a test
+        \\  display  shows something
+        \\
+        \\Options:
+        \\  --verbose
+        \\
+    ;
 
     try std.testing.expectEqualStrings(expected, l.items);
 }
