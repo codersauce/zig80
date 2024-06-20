@@ -24,14 +24,11 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    // try help_for(Cli, std.io.getStdOut().writer());
     const cli = try parse(Cli, args);
     std.debug.print("{any}\n", .{cli});
 }
 
 pub fn parse(comptime T: type, args: [][]const u8) !?T {
-    var r: T = undefined;
-
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--help")) {
             try help_for(T, std.io.getStdOut().writer());
@@ -39,7 +36,18 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
         }
     }
 
+    var r: T = undefined;
+
     switch (@typeInfo(T)) {
+        .Union => |data| {
+            inline for (data.fields) |field| {
+                if (std.mem.eql(u8, args[1], field.name)) {
+                    // let's assemble the subcommand structure
+                    const subcommand = try parse(field.type, args[1..]);
+                    return @unionInit(T, field.name, subcommand.?);
+                }
+            }
+        },
         .Struct => |info| {
             var fields_seen = [_]bool{false} ** info.fields.len;
             var it = ArgIterator.init(args);
@@ -77,8 +85,8 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
                                         fields_seen[i] = true;
                                         @field(r, field.name) = true;
                                     },
-                                    else => {
-                                        // std.debug.print("Unsupported type: {any}\n", .{field.type});
+                                    else => |subtype| {
+                                        std.log.err("Unsupported option type '{any}' for '{s}'", .{ subtype, field.name });
                                         return error.UnsupportedType;
                                     },
                                 }
@@ -99,8 +107,17 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
                                         fields_seen[i] = true;
                                         @field(r, field.name) = arg;
                                     },
-                                    else => {
-                                        return error.UnsupportedType;
+                                    bool => {
+                                        return error.InvalidParam;
+                                    },
+                                    else => |subtype| {
+                                        const res = try parse(subtype, args);
+                                        if (res == null) {
+                                            std.log.err("res: {any}\n", .{res});
+                                            return error.UnsupportedType;
+                                        }
+                                        fields_seen[i] = true;
+                                        @field(r, field.name) = res.?;
                                     },
                                 }
                             }
@@ -119,6 +136,7 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
 
     return r;
 }
+
 fn fillDefaultStructValues(comptime T: type, r: *T, fields_seen: *[@typeInfo(T).Struct.fields.len]bool) !void {
     inline for (@typeInfo(T).Struct.fields, 0..) |field, i| {
         if (!fields_seen[i]) {
@@ -131,6 +149,7 @@ fn fillDefaultStructValues(comptime T: type, r: *T, fields_seen: *[@typeInfo(T).
                 } else if (field.type == bool) {
                     @field(r, field.name) = false;
                 } else {
+                    std.log.err("Missing field '{s}'\n", .{field.name});
                     return error.MissingField;
                 }
             }
@@ -214,6 +233,90 @@ test "parse with only optional args" {
         .test_name = null,
         .benchmark = false,
     };
+
+    try std.testing.expectEqual(expected, actual.?);
+}
+
+test "parse struct as first subcommand" {
+    const TestCmd = struct {
+        name: ?[]const u8,
+        opt_env: ?[]const u8,
+        opt_benchmark: bool,
+    };
+
+    const ShowCmd = struct {
+        name: []const u8,
+    };
+
+    const SubcommandTag = enum {
+        @"test",
+        show,
+    };
+
+    const Subcommand = union(SubcommandTag) {
+        @"test": TestCmd,
+        show: ShowCmd,
+    };
+
+    const Cmd = struct {
+        subcommand: Subcommand,
+        opt_verbose: bool,
+    };
+
+    var args = [_][]const u8{ "command_name", "test", "test-01", "--env", "production", "--benchmark" };
+
+    const expected = Cmd{
+        .subcommand = Subcommand{
+            .@"test" = TestCmd{
+                .name = "test-01",
+                .opt_env = "production",
+                .opt_benchmark = true,
+            },
+        },
+        .opt_verbose = false,
+    };
+    const actual = try parse(Cmd, &args);
+
+    try std.testing.expectEqual(expected, actual.?);
+}
+
+test "parse struct as second subcommand" {
+    const TestCmd = struct {
+        name: ?[]const u8,
+        opt_env: ?[]const u8,
+        opt_benchmark: bool,
+    };
+
+    const ShowCmd = struct {
+        name: []const u8,
+    };
+
+    const SubcommandTag = enum {
+        @"test",
+        show,
+    };
+
+    const Subcommand = union(SubcommandTag) {
+        @"test": TestCmd,
+        show: ShowCmd,
+    };
+
+    const Cmd = struct {
+        subcommand: Subcommand,
+        opt_verbose: bool,
+    };
+
+    var args = [_][]const u8{ "command_name", "show", "test-01" };
+
+    const expected = Cmd{
+        .subcommand = Subcommand{
+            .show = ShowCmd{
+                .name = "test-01",
+            },
+        },
+        .opt_verbose = false,
+    };
+    const actual = try parse(Cmd, &args);
 
     try std.testing.expectEqual(expected, actual.?);
 }

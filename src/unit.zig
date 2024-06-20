@@ -10,7 +10,12 @@ const Flag = cpu_import.Flag;
 
 const Options = struct {
     test_name: ?[]const u8,
-    benchmark: bool,
+    opt_bench: bool,
+
+    pub const field_info = std.enums.EnumFieldStruct(std.meta.FieldEnum(@This()), ?[]const u8, @as(?[]const u8, null)){
+        .test_name = "runs the given test only, all tests if omitted",
+        .opt_bench = "runs the tests on the benchmark emulator",
+    };
 };
 
 pub fn main() !void {
@@ -34,7 +39,7 @@ pub fn main() !void {
     const results = try loadTestResults(alloc);
     defer results.deinit();
 
-    if (options.benchmark) {
+    if (options.opt_bench) {
         std.debug.print("Running on benchmark emulator...\n", .{});
         for (tests.value, 0..) |t, n| {
             const r = results.value[n];
