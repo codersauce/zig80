@@ -185,142 +185,6 @@ const ArgIterator = struct {
     }
 };
 
-test "parse with positional arguments" {
-    var args = [_][]const u8{ "command_name", "test-01", "--env", "production", "--benchmark" };
-
-    const actual = try parse(Cli, &args);
-    // std.debug.print("{any}\n", .{actual});
-    const expected = Cli{
-        .test_name = "test-01",
-        .other_test_name = null,
-        .opt_env = "production",
-        .opt_benchmark = true,
-    };
-
-    try std.testing.expectEqual(expected, actual.?);
-}
-
-test "parse with option missing an argument" {
-    var args = [_][]const u8{ "command_name", "test-01", "--env" };
-
-    try std.testing.expectError(error.InvalidParam, parse(Cli, &args));
-}
-
-test "parse with default values" {
-    var args = [_][]const u8{ "command_name", "test-01" };
-
-    const actual = try parse(Cli, &args);
-    const expected = Cli{
-        .test_name = "test-01",
-        .other_test_name = null,
-        .opt_env = null,
-        .opt_benchmark = false,
-    };
-
-    try std.testing.expectEqual(expected, actual.?);
-}
-
-test "parse with only optional args" {
-    const Options = struct {
-        test_name: ?[]const u8,
-        benchmark: bool,
-    };
-
-    var args = [_][]const u8{"command_name"};
-
-    const actual = try parse(Options, &args);
-    const expected = Options{
-        .test_name = null,
-        .benchmark = false,
-    };
-
-    try std.testing.expectEqual(expected, actual.?);
-}
-
-test "parse struct as first subcommand" {
-    const TestCmd = struct {
-        name: ?[]const u8,
-        opt_env: ?[]const u8,
-        opt_benchmark: bool,
-    };
-
-    const ShowCmd = struct {
-        name: []const u8,
-    };
-
-    const SubcommandTag = enum {
-        @"test",
-        show,
-    };
-
-    const Subcommand = union(SubcommandTag) {
-        @"test": TestCmd,
-        show: ShowCmd,
-    };
-
-    const Cmd = struct {
-        subcommand: Subcommand,
-        opt_verbose: bool,
-    };
-
-    var args = [_][]const u8{ "command_name", "test", "test-01", "--env", "production", "--benchmark" };
-
-    const expected = Cmd{
-        .subcommand = Subcommand{
-            .@"test" = TestCmd{
-                .name = "test-01",
-                .opt_env = "production",
-                .opt_benchmark = true,
-            },
-        },
-        .opt_verbose = false,
-    };
-    const actual = try parse(Cmd, &args);
-
-    try std.testing.expectEqual(expected, actual.?);
-}
-
-test "parse struct as second subcommand" {
-    const TestCmd = struct {
-        name: ?[]const u8,
-        opt_env: ?[]const u8,
-        opt_benchmark: bool,
-    };
-
-    const ShowCmd = struct {
-        name: []const u8,
-    };
-
-    const SubcommandTag = enum {
-        @"test",
-        show,
-    };
-
-    const Subcommand = union(SubcommandTag) {
-        @"test": TestCmd,
-        show: ShowCmd,
-    };
-
-    const Cmd = struct {
-        subcommand: Subcommand,
-        opt_verbose: bool,
-    };
-
-    var args = [_][]const u8{ "command_name", "show", "test-01" };
-
-    const expected = Cmd{
-        .subcommand = Subcommand{
-            .show = ShowCmd{
-                .name = "test-01",
-            },
-        },
-        .opt_verbose = false,
-    };
-    const actual = try parse(Cmd, &args);
-
-    try std.testing.expectEqual(expected, actual.?);
-}
-
 pub fn help_for(comptime T: type, writer: anytype) !void {
     const fields = std.meta.fields(T);
     var it = std.process.args();
@@ -747,4 +611,140 @@ test "help message with subcommand" {
     ;
 
     try std.testing.expectEqualStrings(expected, l.items);
+}
+
+test "parse with positional arguments" {
+    var args = [_][]const u8{ "command_name", "test-01", "--env", "production", "--benchmark" };
+
+    const actual = try parse(Cli, &args);
+    // std.debug.print("{any}\n", .{actual});
+    const expected = Cli{
+        .test_name = "test-01",
+        .other_test_name = null,
+        .opt_env = "production",
+        .opt_benchmark = true,
+    };
+
+    try std.testing.expectEqual(expected, actual.?);
+}
+
+test "parse with option missing an argument" {
+    var args = [_][]const u8{ "command_name", "test-01", "--env" };
+
+    try std.testing.expectError(error.InvalidParam, parse(Cli, &args));
+}
+
+test "parse with default values" {
+    var args = [_][]const u8{ "command_name", "test-01" };
+
+    const actual = try parse(Cli, &args);
+    const expected = Cli{
+        .test_name = "test-01",
+        .other_test_name = null,
+        .opt_env = null,
+        .opt_benchmark = false,
+    };
+
+    try std.testing.expectEqual(expected, actual.?);
+}
+
+test "parse with only optional args" {
+    const Options = struct {
+        test_name: ?[]const u8,
+        benchmark: bool,
+    };
+
+    var args = [_][]const u8{"command_name"};
+
+    const actual = try parse(Options, &args);
+    const expected = Options{
+        .test_name = null,
+        .benchmark = false,
+    };
+
+    try std.testing.expectEqual(expected, actual.?);
+}
+
+test "parse struct as first subcommand" {
+    const TestCmd = struct {
+        name: ?[]const u8,
+        opt_env: ?[]const u8,
+        opt_benchmark: bool,
+    };
+
+    const ShowCmd = struct {
+        name: []const u8,
+    };
+
+    const SubcommandTag = enum {
+        @"test",
+        show,
+    };
+
+    const Subcommand = union(SubcommandTag) {
+        @"test": TestCmd,
+        show: ShowCmd,
+    };
+
+    const Cmd = struct {
+        subcommand: Subcommand,
+        opt_verbose: bool,
+    };
+
+    var args = [_][]const u8{ "command_name", "test", "test-01", "--env", "production", "--benchmark" };
+
+    const expected = Cmd{
+        .subcommand = Subcommand{
+            .@"test" = TestCmd{
+                .name = "test-01",
+                .opt_env = "production",
+                .opt_benchmark = true,
+            },
+        },
+        .opt_verbose = false,
+    };
+    const actual = try parse(Cmd, &args);
+
+    try std.testing.expectEqual(expected, actual.?);
+}
+
+test "parse struct as second subcommand" {
+    const TestCmd = struct {
+        name: ?[]const u8,
+        opt_env: ?[]const u8,
+        opt_benchmark: bool,
+    };
+
+    const ShowCmd = struct {
+        name: []const u8,
+    };
+
+    const SubcommandTag = enum {
+        @"test",
+        show,
+    };
+
+    const Subcommand = union(SubcommandTag) {
+        @"test": TestCmd,
+        show: ShowCmd,
+    };
+
+    const Cmd = struct {
+        subcommand: Subcommand,
+        opt_verbose: bool,
+    };
+
+    var args = [_][]const u8{ "command_name", "show", "test-01" };
+
+    const expected = Cmd{
+        .subcommand = Subcommand{
+            .show = ShowCmd{
+                .name = "test-01",
+            },
+        },
+        .opt_verbose = false,
+    };
+    const actual = try parse(Cmd, &args);
+
+    try std.testing.expectEqual(expected, actual.?);
 }
