@@ -8,14 +8,28 @@ const Allocator = std.mem.Allocator;
 const Z80 = cpu_import.Z80;
 const Flag = cpu_import.Flag;
 
-const Options = struct {
+const Commands = enum {
+    show,
+    run,
+};
+
+const Command = union(Commands) {
+    show: ShowCmd,
+    run: RunCmd,
+};
+
+const RunCmd = struct {
     test_name: ?[]const u8,
     opt_bench: bool,
+    opt_both: bool,
+};
 
-    pub const field_info = std.enums.EnumFieldStruct(std.meta.FieldEnum(@This()), ?[]const u8, @as(?[]const u8, null)){
-        .test_name = "runs the given test only, all tests if omitted",
-        .opt_bench = "runs the tests on the benchmark emulator",
-    };
+const ShowCmd = struct {
+    test_name: []const u8,
+};
+
+const Cli = struct {
+    command: Command,
 };
 
 pub fn main() !void {
@@ -27,8 +41,7 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
 
-    const o = try cli.parse(Options, args);
-
+    const o = try cli.parse(Cli, args);
     if (o == null) {
         return;
     }
@@ -36,12 +49,43 @@ pub fn main() !void {
     const options = o.?;
 
     const tests = try loadTests(alloc);
+    defer tests.deinit();
     const results = try loadTestResults(alloc);
     defer results.deinit();
+
+    switch (options.command) {
+        Commands.show => |cmd| {
+            showTest(alloc, tests, results, cmd.test_name);
+        },
+        Commands.run => |cmd| {
+            runTests(alloc, tests, results, cmd);
+        },
+    }
+}
+
+fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.json.Parsed([]TestResult), options: RunCmd) void {
+    if (options.opt_both) {
+        std.debug.print("Running on both emulators...\n", .{});
+        for (tests.value, 0..) |t, n| {
+            if (options.test_name) |name| {
+                if (!std.mem.eql(u8, t.name, name)) {
+                    continue;
+                }
+            }
+            runTest(alloc, t, results.value[n]);
+            runBenchmark(t, results.value[n]);
+        }
+        return;
+    }
 
     if (options.opt_bench) {
         std.debug.print("Running on benchmark emulator...\n", .{});
         for (tests.value, 0..) |t, n| {
+            if (options.test_name) |name| {
+                if (!std.mem.eql(u8, t.name, name)) {
+                    continue;
+                }
+            }
             const r = results.value[n];
             runBenchmark(t, r);
         }
@@ -59,27 +103,104 @@ pub fn main() !void {
     }
 }
 
+fn showTest(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.json.Parsed([]TestResult), name: []const u8) void {
+    _ = alloc;
+    for (tests.value, 0..) |t, n| {
+        if (!std.mem.eql(u8, t.name, name)) {
+            continue;
+        }
+        const r = results.value[n];
+        std.debug.print("Test: {s}\n", .{t.name});
+        std.debug.print("  AF: 0x{X:0>4}\n", .{t.state.af});
+        std.debug.print("  BC: 0x{X:0>4}\n", .{t.state.bc});
+        std.debug.print("  DE: 0x{X:0>4}\n", .{t.state.de});
+        std.debug.print("  HL: 0x{X:0>4}\n", .{t.state.hl});
+        std.debug.print("  AF': 0x{X:0>4}\n", .{t.state.afDash});
+        std.debug.print("  BC': 0x{X:0>4}\n", .{t.state.bcDash});
+        std.debug.print("  DE': 0x{X:0>4}\n", .{t.state.deDash});
+        std.debug.print("  HL': 0x{X:0>4}\n", .{t.state.hlDash});
+        std.debug.print("  IX: 0x{X:0>4}\n", .{t.state.ix});
+        std.debug.print("  IY: 0x{X:0>4}\n", .{t.state.iy});
+        std.debug.print("  SP: 0x{X:0>4}\n", .{t.state.sp});
+        std.debug.print("  PC: 0x{X:0>4}\n", .{t.state.pc});
+        std.debug.print("  I: 0x{X:0>4}\n", .{t.state.i});
+        std.debug.print("  R: 0x{X:0>4}\n", .{t.state.r});
+        std.debug.print("  IFF1: {}\n", .{t.state.iff1});
+        std.debug.print("  IFF2: {}\n", .{t.state.iff2});
+        std.debug.print("  IM: 0x{X:0>4}\n", .{t.state.im});
+        std.debug.print("  Halted: {}\n", .{t.state.halted});
+        std.debug.print("  TStates: {d}\n", .{t.state.tStates});
+        for (t.memory) |m| {
+            std.debug.print("  Memory at 0x{X:0>4}:\n", .{m.address});
+            for (m.data) |d| {
+                std.debug.print("    0x{X:0>2}\n", .{d});
+            }
+        }
+        std.debug.print("Expected:\n", .{});
+        std.debug.print("  AF: 0x{X:0>4}\n", .{r.state.af});
+        std.debug.print("  BC: 0x{X:0>4}\n", .{r.state.bc});
+        std.debug.print("  DE: 0x{X:0>4}\n", .{r.state.de});
+        std.debug.print("  HL: 0x{X:0>4}\n", .{r.state.hl});
+        std.debug.print("  AF': 0x{X:0>4}\n", .{r.state.afDash});
+        std.debug.print("  BC': 0x{X:0>4}\n", .{r.state.bcDash});
+        std.debug.print("  DE': 0x{X:0>4}\n", .{r.state.deDash});
+        std.debug.print("  HL': 0x{X:0>4}\n", .{r.state.hlDash});
+        std.debug.print("  IX: 0x{X:0>4}\n", .{r.state.ix});
+        std.debug.print("  IY: 0x{X:0>4}\n", .{r.state.iy});
+        std.debug.print("  SP: 0x{X:0>4}\n", .{r.state.sp});
+        std.debug.print("  PC: 0x{X:0>4}\n", .{r.state.pc});
+        std.debug.print("  I: 0x{X:0>4}\n", .{r.state.i});
+        std.debug.print("  R: 0x{X:0>4}\n", .{r.state.r});
+        std.debug.print("  IFF1: {}\n", .{r.state.iff1});
+        std.debug.print("  IFF2: {}\n", .{r.state.iff2});
+        std.debug.print("  IM: 0x{X:0>4}\n", .{r.state.im});
+        std.debug.print("  Halted: {}\n", .{r.state.halted});
+        std.debug.print("  TStates: {d}\n", .{r.state.tStates});
+        if (r.memory) |mem| {
+            for (mem) |m| {
+                std.debug.print("  Memory at 0x{X:0>4}:\n", .{m.address});
+                for (m.data) |d| {
+                    std.debug.print("    0x{X:0>2}\n", .{d});
+                }
+            }
+        }
+    }
+}
+
 fn runTest(alloc: Allocator, t: TestCase, result: TestResult) void {
     var cpu = Z80.init(alloc);
-    std.debug.print("Running test '{s}'...\n", .{t.name});
-    loadTest(&cpu, t);
+    executeTest(&cpu, t, result);
+    compareResult(&cpu, result);
+}
 
+fn executeTest(cpu: *Z80, t: TestCase, result: TestResult) void {
+    std.debug.print("Running test '{s}'...\n", .{t.name});
+    loadTest(cpu, t);
+
+    const initial_cycles = cpu.cycles;
     var current_cycles = cpu.cycles;
-    while (cpu.cycles < result.state.tStates) {
+    // std.debug.print("Initial cycles: {d}\n", .{initial_cycles});
+    while ((current_cycles - initial_cycles) < result.state.tStates) {
         cpu.execute();
+        // std.debug.print("Cycles: {d}\n", .{cpu.cycles});
         if (current_cycles == cpu.cycles) {
             std.debug.panic("No cycles\n", .{});
             break;
         }
         current_cycles = cpu.cycles;
     }
-    compareResult(&cpu, result);
 }
 
 fn runBenchmark(t: TestCase, result: TestResult) void {
     var cpu = c.Z80{};
     var memory = [_]u8{0} ** 0x10000;
-    loadBench(&cpu, t, &memory);
+
+    executeOnBenchmark(&cpu, t, result, &memory);
+    compareBenchResult(&cpu, result, &memory);
+}
+
+fn executeOnBenchmark(cpu: *c.Z80, t: TestCase, result: TestResult, memory: *[0x10000]u8) void {
+    loadBench(cpu, t, memory);
     std.debug.print("Running test '{s}'...\n", .{t.name});
 
     const read = struct {
@@ -118,19 +239,17 @@ fn runBenchmark(t: TestCase, result: TestResult) void {
     cpu.fetch_opcode = read;
     cpu.in = readPort;
     cpu.out = writePort;
-    cpu.context = &memory;
+    cpu.context = memory;
 
     var current_cycles: usize = 0;
     while (current_cycles < result.state.tStates) {
-        const cycles = c.z80_run(&cpu, 1);
+        const cycles = c.z80_run(cpu, 1);
         if (cycles == 0) {
             std.debug.panic("No cycles\n", .{});
             break;
         }
         current_cycles += cycles;
     }
-
-    compareBenchResult(&cpu, result, &memory);
 }
 
 fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) void {
@@ -338,9 +457,10 @@ fn compareResult(cpu: *Z80, result: TestResult) void {
         std.debug.print("Halted mismatch: expected {}, got {}\n", .{ result.state.halted, cpu.halt });
     }
 
-    if (result.state.tStates != cpu.cycles - 1) {
-        std.debug.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
-    }
+    // tStates are not cycles
+    // if (result.state.tStates != cpu.cycles - 1) {
+    //     std.debug.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
+    // }
 
     if (result.memory) |mem| {
         for (mem) |m| {

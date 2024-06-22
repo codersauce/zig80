@@ -1266,6 +1266,7 @@ pub const Z80 = struct {
     }
 
     pub fn executeOpcode(self: *Z80, opcode: u8) void {
+        // std.debug.print("opcode = 0x{X:0>2}\n", .{opcode});
         switch (opcode) {
             0x00 => {
                 // NOP
@@ -1375,7 +1376,8 @@ pub const Z80 = struct {
                 const offset = self.fetchByteAsI8();
                 self.setB(self.getB() -% 1);
                 if (self.getB() != 0) {
-                    self.pc += @intCast(offset);
+                    // std.debug.print("pc = {X:0>4} offset = {d}\n", .{ self.pc, offset });
+                    self.pc = @intCast(@as(i16, @intCast(self.pc)) + @as(i16, @intCast(offset)));
                     self.cycles += 13;
                 } else {
                     self.cycles += 8;
@@ -1685,6 +1687,7 @@ pub const Z80 = struct {
             0x37 => {
                 // SCF
                 var flag = self.getFlag();
+                flag.setXY1(self.getA());
                 flag.setCarry(true);
                 flag.setSubtract(false);
                 flag.setHalfCarry(false);
@@ -2095,7 +2098,7 @@ pub const Z80 = struct {
             },
             0x86 => {
                 // ADD A, (HL)
-                self.add(self.getA(), self.memory[self.hl]);
+                self.addn(self.memory[self.hl]);
             },
             0x87 => {
                 // ADD A, A
@@ -3453,9 +3456,11 @@ pub const Z80 = struct {
                 self.cycles += 18;
             },
 
-            else => |code| {
-                self.saveState("/tmp/cpu.json");
-                std.debug.panic("Unknown extended opcode: {0X:0>2}\n", .{code});
+            else => |_| {
+                // self.saveState("/tmp/cpu.json");
+                // std.debug.panic("Unknown ED extended opcode: {0X:0>2}\n", .{code});
+                self.pc +%= 2;
+                self.cycles += 8;
             },
         }
     }

@@ -194,11 +194,16 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     var max_arg_len: u32 = 0;
     inline for (fields) |field| {
         if (std.mem.startsWith(u8, field.name, "opt_")) {
-            if (field.type == bool) {
-                max_option_len = @max(max_option_len, field.name.len - 4);
+            std.debug.print("len: {d}\n", .{field.name});
+            if (field.name.len < 4) {
+                std.log.err("Invalid field len '{s}'\n", .{field.name});
             } else {
-                // twice the field name for the argument, plus 1 for space and 2 for brackets
-                max_option_len = @max(max_arg_len, (field.name.len - 4) * 2 + 3);
+                if (field.type == bool) {
+                    max_option_len = @max(max_option_len, field.name.len - 4);
+                } else {
+                    // twice the field name for the argument, plus 1 for space and 2 for brackets
+                    max_option_len = @max(max_arg_len, (field.name.len - 4) * 2 + 3);
+                }
             }
         } else {
             max_arg_len = @max(max_arg_len, field.name.len);
@@ -214,13 +219,17 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
             if (@typeInfo(field.type) == .Optional or field.type == bool) {
                 optionals = true;
             } else {
-                try writer.print(" --{s}", .{field.name[4..]});
-                if (field.type != bool) {
-                    try writer.print(" <", .{});
-                    for (field.name[4..]) |c| {
-                        try writer.print("{c}", .{std.ascii.toUpper(c)});
+                if (field.name.len < 4) {
+                    std.log.err("Invalid field len '{s}'\n", .{field.name});
+                } else {
+                    try writer.print(" --{s}", .{field.name[4..]});
+                    if (field.type != bool) {
+                        try writer.print(" <", .{});
+                        for (field.name[4..]) |c| {
+                            try writer.print("{c}", .{std.ascii.toUpper(c)});
+                        }
+                        try writer.print(">", .{});
                     }
-                    try writer.print(">", .{});
                 }
             }
         } else {
@@ -246,8 +255,9 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     }
 
     if (optionals) {
-        try writer.print(" [OPTIONS]\n", .{});
+        try writer.print(" [OPTIONS]", .{});
     }
+    try writer.print("\n", .{});
 
     //--- Subcommands
     if (command) {
@@ -276,7 +286,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                 }
             }
         }
-        try writer.print("\n", .{});
+        // try writer.print("\n", .{});
     }
 
     //--- Options
@@ -285,7 +295,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
 
         inline for (fields) |field| {
             if (std.mem.startsWith(u8, field.name, "opt_")) {
-                try writer.print("\n  --{s}", .{field.name[4..]});
+                // try writer.print("\n  --{s}", .{field.name[4..]});
 
                 if (field.type != bool) {
                     if (@typeInfo(field.type) == .Optional) {
@@ -294,9 +304,9 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                         try writer.print(" <", .{});
                     }
 
-                    for (field.name[4..]) |c| {
-                        try writer.print("{c}", .{std.ascii.toUpper(c)});
-                    }
+                    // for (field.name[4..]) |c| {
+                    //     try writer.print("{c}", .{std.ascii.toUpper(c)});
+                    // }
 
                     if (@typeInfo(field.type) == .Optional) {
                         try writer.print("]", .{});
@@ -747,4 +757,52 @@ test "parse struct as second subcommand" {
     const actual = try parse(Cmd, &args);
 
     try std.testing.expectEqual(expected, actual.?);
+}
+
+test "help for complex struct" {
+    const Commands = enum {
+        run,
+        show,
+    };
+
+    const RunCmd = struct {
+        test_name: ?[]const u8,
+        opt_bench: bool,
+        opt_both: bool,
+    };
+
+    const ShowCmd = struct {
+        test_name: []const u8,
+    };
+
+    const Command = union(Commands) {
+        run: RunCmd,
+        show: ShowCmd,
+
+        pub const field_info = .{
+            "execute tests",
+            "display information about a test",
+        };
+    };
+
+    const Options = struct {
+        command: Command,
+    };
+
+    var l = std.ArrayList(u8).init(std.testing.allocator);
+    defer l.deinit();
+
+    try help_for(Options, l.writer());
+
+    const expected =
+        \\Usage: test <COMMAND>
+        \\
+        \\Commands:
+        \\  run   execute tests
+        \\  show  display information about a test
+        \\
+    ;
+
+    try std.testing.expectEqualStrings(expected, l.items);
+    std.debug.print("{s}\n", .{l.items});
 }
