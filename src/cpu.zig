@@ -317,6 +317,7 @@ pub const Z80 = struct {
     }
 
     pub fn setHLMemory(self: *Z80, v: u8) void {
+        std.debug.print("setHLMemory: hl={X:0>4}, v={X:0>2}\n", .{ self.hl, v });
         self.memory[self.hl] = v;
     }
 
@@ -356,9 +357,19 @@ pub const Z80 = struct {
         return res;
     }
 
-    pub fn add(self: *Z80, v1: u8, v2: u8) void {
+    pub fn add(self: *Z80, v2: u8) void {
+        const v1 = self.getA();
         const result: u16 = @as(u16, v1) + @as(u16, v2);
         const sum = @as(u8, @intCast(result & 0xFF));
+        std.debug.print("add: v1={X:0>2}, v2={X:0>2}, sum={X:0>2} {2b}\n", .{ v1, v2, sum });
+        std.debug.print("sign: {}, zero: {}, halfCarry: {}, parityOverflow: {}, subtract: {}, carry: {}\n", .{
+            result & 0x80 != 0,
+            sum == 0,
+            (v1 & 0x0F) + (v2 & 0x0F) > 0x0F,
+            v1 == 0x7F,
+            false,
+            result > 0xFF,
+        });
 
         var flag = self.getFlag();
         flag.setFromU8(sum);
@@ -433,17 +444,36 @@ pub const Z80 = struct {
     // }
 
     /// Add a word to a native 16-bit register.
-    pub fn addiz(self: *Z80, reg: *u16, val: u16) void {
-        const nsf = self.isSign();
-        const nzf = self.isZero();
-        const npf = self.isParityOverflow();
-
-        reg.* = self.add16n(reg.*, val, false);
-
-        self.setSign(nsf);
-        self.setZero(nzf);
-        self.setParityOverflow(npf);
-    }
+    // pub fn addiz(self: *Z80, reg: *u16, val: u16) void {
+    //     const nsf = self.isSign();
+    //     const nzf = self.isZero();
+    //     const npf = self.isParityOverflow();
+    //
+    //     reg.* = self.add16n(reg.*, val, false);
+    //
+    //     self.setSign(nsf);
+    //     self.setZero(nzf);
+    //     self.setParityOverflow(npf);
+    //     self.setHalfCarry((reg.* & 0x0FFF) + (val & 0x0FFF) > 0x0FFF);
+    // }
+    //
+    // fn addizn(self: *Z80, iz: u16, d: i16) u16 {
+    //     const uz = @as(u16, @bitCast(d));
+    //     const res = iz +% @as(u16, uz);
+    //
+    //     // Calculate half-carry
+    //     const hc = (iz & 0x0FFF) + (@as(u16, uz) & 0x0FFF) > 0x0FFF;
+    //
+    //     // Set flags
+    //     self.setSubtract(false);
+    //     self.setHalfCarry(hc);
+    //     self.setCarry((iz & 0xFFFF) + (@as(u16, uz) & 0xFFFF) > 0xFFFF);
+    //
+    //     // Set XY flags based on the high byte of the result
+    //     self.setXY1(@as(u8, @truncate(res >> 8)));
+    //
+    //     return res;
+    // }
 
     // SI u16 add16(u16 a, u16 b, bv cy) {
     //   u8 lo = add8(a, b, cy);
@@ -474,6 +504,29 @@ pub const Z80 = struct {
         var flags = self.getFlag();
         flags.setZero(res == 0);
         self.wz = a + 1;
+        return res;
+    }
+
+    pub fn addiz(self: *Z80, v1: u16, v2: u16) u16 {
+        // 16 bit additions are done in two steps:
+        // First the two lower bytes are added, the two higher bytes.
+        //
+        // Instruction           Flags     Notes
+        // ===========           =====     =====
+        // ADD s                 --***-0C  F5,H,F3 from higher bytes addition
+
+        const result = @as(u32, @intCast(v1)) + @as(u32, @intCast(v2));
+        const resultHi: u8 = @intCast((result >> 8) & 0xFF);
+        // const resultLo: u8 = @intCast(result & 0xFF);
+
+        var flag = self.getFlag();
+        flag.setSubtract(false);
+        flag.setXY1(resultHi);
+        flag.setCarry(result > 0xFFFF);
+        flag.setHalfCarry((v1 & 0x0FFF) + (v2 & 0x0FFF) > 0x0FFF);
+        self.setF(flag.get());
+
+        const res: u16 = @intCast(result & 0xFFFF);
         return res;
     }
 
@@ -909,76 +962,145 @@ pub const Z80 = struct {
 
     fn rlc(self: *Z80, v: u8) u8 {
         // op_cbh(rlc, bv old = val >> 7; val = (val << 1) | old; cf = old;)
-        const old = v >> 7;
-        const res = (v << 1) | old;
-        self.setCarry(old != 0);
+        const old = v & 0x80 != 0;
+        const res = (v << 1) | @as(u8, @intFromBool(old));
+
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
+
         return res;
     }
 
     fn rrc(self: *Z80, v: u8) u8 {
         // op_cbh(rrc, bv old = val & 1; val = (val >> 1) | (old << 7); cf = old;)
-        const old = v & 1;
-        const res = (v >> 1) | (old << 7);
-        self.setCarry(old != 0);
+        const old = v & 1 != 0;
+        const res = (v >> 1) | (@as(u8, @intFromBool(old)) << 7);
+
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
+
         return res;
     }
 
     fn rl(self: *Z80, v: u8) u8 {
-        // op_cbh(rl, bv old = val >> 7; val = (val << 1) | cf; cf = old;)
-        const old = v >> 7;
-        const carry: u8 = if (self.isCarry()) 1 else 0;
-        const res = (v << 1) | carry;
-        self.setCarry(old != 0);
+        const old = v & 0x80 != 0;
+        const res = (v << 1) | @as(u8, @intFromBool(self.isCarry()));
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
         return res;
     }
 
     fn rr(self: *Z80, v: u8) u8 {
-        // op_cbh(rr, bv old = val & 1; val = (val >> 1) | (cf << 7); cf = old;)
-        const old = v & 1;
-        const carry: u8 = if (self.isCarry()) 1 else 0;
-        const res = (v >> 1) | carry << 7;
-        self.setCarry(old != 0);
+        const old = v & 1 != 0;
+        const res = (v >> 1) | (@as(u8, @intFromBool(self.isCarry())) << 7);
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
         return res;
     }
 
     fn sla(self: *Z80, v: u8) u8 {
-        // op_cbh(sla, cf = val >> 7; val <<= 1;)
+        const old = v & 0x80 != 0;
         const res = v << 1;
-        self.setCarry(v >> 7 != 0);
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
         return res;
     }
 
     fn sra(self: *Z80, v: u8) u8 {
-        // op_cbh(sra, cf = val & 1; val = (val >> 1) | (val & 0x80);)
+        const old = v & 1 != 0;
         const res = (v >> 1) | (v & 0x80);
-        self.setCarry(v & 1 != 0);
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
         return res;
     }
 
     fn sll(self: *Z80, v: u8) u8 {
-        // op_cbh(sll, cf = val >> 7; val = (val << 1) | 1;)
+        const old = v & 0x80 != 0;
         const res = (v << 1) | 1;
-        self.setCarry(v >> 7 != 0);
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
         return res;
     }
 
     fn srl(self: *Z80, v: u8) u8 {
-        // op_cbh(srl, cf = val & 1; val >>= 1;)
+        const old = v & 1 != 0;
         const res = v >> 1;
-        self.setCarry(v & 1 != 0);
+        self.setXY1(res);
+        self.setCarry(old);
+        self.setZero(res == 0);
+        self.setParityOverflow(utils.parity(res));
+        self.setHalfCarry(false);
+        self.setSubtract(false);
+        self.setSign(res & 0x80 == 0x80);
         return res;
     }
 
+    // fn sll(self: *Z80, v: u8) u8 {
+    //     // op_cbh(sll, cf = val >> 7; val = (val << 1) | 1;)
+    //     const res = (v << 1) | 1;
+    //     self.setCarry(v >> 7 != 0);
+    //     return res;
+    // }
+    //
+    // fn srl(self: *Z80, v: u8) u8 {
+    //     // op_cbh(srl, cf = val & 1; val >>= 1;)
+    //     const res = v >> 1;
+    //     self.setCarry(v & 1 != 0);
+    //     return res;
+    // }
+
     /// Detects if n-th bit of an u8 is set
-    fn bt(self: *Z80, n: u3, val: u8) u8 {
-        const res_val = val & (@as(u8, 1) << n);
-        const res = res_val != 0;
-        self.setZero(res);
-        self.setParityOverflow(res);
-        self.setXY1(val);
+    fn bt(self: *Z80, b: u3, v: u8) void {
+        const result = v & (@as(u8, 1) << b) == 0;
+        self.setZero(result);
         self.setHalfCarry(true);
         self.setSubtract(false);
-        return res_val;
+        self.setParityOverflow(result);
+        self.setSign(b == 7 and !result);
+        // /*----------------------------------------------------------.
+        // | In section 4.1 of "The Undocumented Z80 Documented" (all  |
+        // | versions), Sean Young says that YF and XF are taken from  |
+        // | the value resulting from the bit test operation, but this |
+        // | seems not to be true. They are copies of bits 5 and 3 of  |
+        // | the register containing the value to be tested (K).       |
+        // '==========================================================*/
+        const xy = v & 0x28; // 0x28 is binary 00101000, preserving bits 5 and 3
+        self.setXY1(xy);
     }
 
     /// Detects if n-th bit of an u8 is set
@@ -1173,6 +1295,12 @@ pub const Z80 = struct {
                 std.debug.panic("No cycles were consumed (opcode {X:0>2})\n", .{opcode});
             }
         }
+    }
+
+    pub fn dumpFlags(self: *Z80) !void {
+        var flag = self.getFlag();
+        std.debug.print("F: {X:0>2} ", .{self.getF()});
+        try flag.write(std.io.getStdOut().writer());
     }
 
     fn isZero(self: *Z80) bool {
@@ -2074,35 +2202,36 @@ pub const Z80 = struct {
             },
             0x80 => {
                 // ADD A, B
-                self.add(self.getA(), self.getB());
+                self.add(self.getB());
             },
             0x81 => {
                 // ADD A, C
-                self.add(self.getA(), self.getC());
+                self.add(self.getC());
             },
             0x82 => {
                 // ADD A, D
-                self.add(self.getA(), self.getD());
+                self.add(self.getD());
             },
             0x83 => {
                 // ADD A, E
-                self.add(self.getA(), self.getE());
+                self.add(self.getE());
             },
             0x84 => {
                 // ADD A, H
-                self.add(self.getA(), self.getH());
+                self.add(self.getH());
             },
             0x85 => {
                 // ADD A, L
-                self.add(self.getA(), self.getL());
+                self.add(self.getL());
             },
             0x86 => {
                 // ADD A, (HL)
-                self.addn(self.memory[self.hl]);
+                self.add(self.memory[self.hl]);
+                self.cycles += 3;
             },
             0x87 => {
                 // ADD A, A
-                self.add(self.getA(), self.getA());
+                self.add(self.getA());
             },
             0x88 => {
                 // ADC A, B
@@ -2163,6 +2292,7 @@ pub const Z80 = struct {
             0x96 => {
                 // SUB (HL)
                 self.sub(self.memory[self.hl]);
+                self.cycles += 3;
             },
             0x97 => {
                 // SUB A
@@ -2195,6 +2325,7 @@ pub const Z80 = struct {
             0x9E => {
                 // SBC A, (HL)
                 self.sbc8(self.memory[self.hl]);
+                self.cycles += 3;
             },
             0x9F => {
                 // SBC A, A
@@ -2259,6 +2390,7 @@ pub const Z80 = struct {
             0xAE => {
                 // XOR (HL)
                 self.xorOp(self.memory[self.hl]);
+                self.cycles += 3;
             },
             0xAF => {
                 // XOR A
@@ -2291,6 +2423,7 @@ pub const Z80 = struct {
             0xB6 => {
                 // OR (HL)
                 self.orOp(self.memory[self.hl]);
+                self.cycles += 3;
             },
             0xB7 => {
                 // OR A
@@ -2323,6 +2456,7 @@ pub const Z80 = struct {
             0xBE => {
                 // CP (HL)
                 self.cp(self.memory[self.hl]);
+                self.cycles += 3;
             },
             0xBF => {
                 // CP A
@@ -2389,7 +2523,8 @@ pub const Z80 = struct {
             0xC6 => {
                 // ADD A, n
                 const n = self.fetchByte();
-                self.add(self.getA(), n);
+                self.add(n);
+                self.cycles += 3;
             },
             0xC7 => {
                 // RST 00H
@@ -2539,6 +2674,7 @@ pub const Z80 = struct {
                 // SUB n
                 const n = self.fetchByte();
                 self.sub(n);
+                self.cycles += 3;
             },
             0xD7 => {
                 // RST 10H
@@ -2977,6 +3113,8 @@ pub const Z80 = struct {
         const da: u3 = @as(u3, @intCast((opcode >> 3) & 0b111)); // auxiliary / op0 kind type
         const dr: u8 = opcode & 0b111; // data
 
+        std.debug.print("CB opcode: {X:0>2} dk: {X:0>2} da: {X:0>2} dr: {X:0>2}\n", .{ opcode, dk, da, dr });
+
         // auxiliary storage for data under hl
         var hlr: u8 = 0;
 
@@ -3013,24 +3151,26 @@ pub const Z80 = struct {
             },
         };
 
+        // std.debug.print("CB opcode: {X:0>2} reg: {X:0>2}\n", .{ opcode, getReg(self) });
+
         switch (dk) {
             0 => {
                 _ = switch (da) {
-                    0 => self.rlc(getReg(self)),
-                    1 => self.rrc(getReg(self)),
-                    2 => self.rl(getReg(self)),
-                    3 => self.rr(getReg(self)),
-                    4 => self.sla(getReg(self)),
-                    5 => self.sra(getReg(self)),
-                    6 => self.sll(getReg(self)),
-                    7 => self.srl(getReg(self)),
+                    0 => setReg(self, self.rlc(getReg(self))),
+                    1 => setReg(self, self.rrc(getReg(self))),
+                    2 => setReg(self, self.rl(getReg(self))),
+                    3 => setReg(self, self.rr(getReg(self))),
+                    4 => setReg(self, self.sla(getReg(self))),
+                    5 => setReg(self, self.sra(getReg(self))),
+                    6 => setReg(self, self.sll(getReg(self))),
+                    7 => setReg(self, self.srl(getReg(self))),
                 };
             },
             1 => {
-                setReg(self, self.bt(da, getReg(self)));
+                self.bt(da, getReg(self));
 
                 // Odd edge case. See the WZ comment.
-                if (da == 6) {
+                if (dr == 6) {
                     self.setXY1(utils.hi(self.wz));
                 }
             },
@@ -3039,10 +3179,11 @@ pub const Z80 = struct {
             else => {},
         }
 
-        // Write back to hl ptr if needed.
-        if (dr == 6) {
-            self.writeByte(self.hl, hlr);
-        }
+        // FIXME: Write back to hl ptr if needed.
+        // if (dr == 6) {
+        //     std.debug.print("CB opcode: {X:0>2} set @0x{X:0>4} hlr: 0x{X:0>2}\n", .{ opcode, self.hl, hlr });
+        //     self.writeByte(self.hl, hlr);
+        // }
     }
 
     fn exec_ed(self: *Z80, opcode: u8) void {
@@ -3491,46 +3632,60 @@ pub const Z80 = struct {
             // Arithmetics.
             0x09 => {
                 // ADD IX, BC
-                self.addiz(ir, self.bc);
+                ir.* = self.addiz(ir.*, self.bc);
+                // const result = self.addizn(ir.*, @as(i16, @intCast(self.bc)));
+                //
+                // // Set flags
+                // self.setSubtract(false);
+                // self.setHalfCarry((ir.* & 0x0FFF) + (self.bc & 0x0FFF) > 0x0FFF);
+                // self.setCarry((@as(u32, ir.*) + self.bc) > 0xFFFF);
+                //
+                // // Set X and Y flags based on the high byte of the result
+                // self.setXY1(@as(u8, @truncate(result >> 8)));
+                //
+                // // Store the result
+                // ir.* = result;
                 self.cycles += 15;
             },
             0x19 => {
                 // ADD IX, DE
-                self.addiz(ir, self.de);
+                ir.* = self.addiz(ir.*, self.de);
+                // self.addiz(ir, self.de);
                 self.cycles += 15;
             },
             0x29 => {
                 // ADD IX, IX
-                self.addiz(ir, ir.*);
+                ir.* = self.addiz(ir.*, ir.*);
                 self.cycles += 15;
             },
             0x39 => {
                 // ADD IX, SP
-                self.addiz(ir, self.sp);
+                ir.* = self.addiz(ir.*, self.sp);
                 self.cycles += 15;
             },
 
             // Hi/lo math.
             // add/adc a, IHI/ILO
             0x84 => {
-                // ADD A, IYH
+                // ADD A, IXH
                 self.setA(self.add8(self.getA(), utils.hi(ir.* >> 8), false));
-                self.cycles += 4;
+                self.cycles += 8;
             },
             0x85 => {
-                // ADD A, IYL
-                self.setA(self.add8(self.getA(), utils.lo(ir.* >> 8), false));
-                self.cycles += 4;
+                // ADD A, IXL
+                // self.setA(self.add8(self.getA(), utils.lo(ir.* >> 8), false));
+                self.add(utils.lo(ir.* >> 8));
+                self.cycles += 8;
             },
             0x8C => {
-                // ADC A, IYH
+                // ADC A, IXH
                 self.setA(self.add8(self.getA(), utils.hi(ir.* >> 8), self.isCarry()));
-                self.cycles += 1;
+                self.cycles += 8;
             },
             0x8D => {
-                // ADC A, IYL
+                // ADC A, IXL
                 self.setA(self.add8(self.getA(), utils.lo(ir.* >> 8), self.isCarry()));
-                self.cycles += 1;
+                self.cycles += 8;
             },
 
             // add/adc/sub/sbc a, byte *(ir + imm)
@@ -3683,10 +3838,272 @@ pub const Z80 = struct {
                 self.cycles += 23;
             },
 
+            // inc/dec IHI/ILO
+            0x24 => {
+                // INC IYH
+                ir.* = utils.setHi(ir.*, self.inc(utils.hi(ir.*)));
+                self.cycles += 8;
+            },
+            0x25 => {
+                // DEC IYH
+                ir.* = utils.setHi(ir.*, self.dec(utils.hi(ir.*)));
+                self.cycles += 8;
+            },
+
+            // loading IX/IY
+            0x2A => {
+                // LD IX, (nn)
+                ir.* = self.readWord(self.fetchWord());
+                self.cycles += 20;
+            },
+            0x22 => {
+                // LD (nn), IX
+                self.writeWord(self.fetchWord(), ir.*);
+                self.cycles += 20;
+            },
+            0x21 => {
+                // LD IX, nn
+                ir.* = self.fetchWord();
+                self.cycles += 14;
+            },
+
+            // ld IHI/ILO r/imm/IHI/ILO
+            0x67 => {
+                // LD IYH, A
+                ir.* = utils.setHi(ir.*, self.getA());
+                self.cycles += 8;
+            },
+            0x60 => {
+                // LD IYH, B
+                ir.* = utils.setHi(ir.*, self.getB());
+                self.cycles += 8;
+            },
+            0x61 => {
+                // LD IYH, C
+                ir.* = utils.setHi(ir.*, self.getC());
+                self.cycles += 8;
+            },
+            0x62 => {
+                // LD IYH, D
+                ir.* = utils.setHi(ir.*, self.getD());
+                self.cycles += 8;
+            },
+            0x63 => {
+                // LD IYH, E
+                ir.* = utils.setHi(ir.*, self.getE());
+                self.cycles += 8;
+            },
+            0x26 => {
+                // LD IYH, n
+                ir.* = utils.setHi(ir.*, self.fetchByte());
+                self.cycles += 11;
+            },
+            0x64 => {
+                // LD IXH, IXH
+                ir.* = utils.setHi(ir.*, utils.hi(ir.*));
+                self.cycles += 8;
+            },
+            0x65 => {
+                // LD IXH, IXL
+                ir.* = utils.setHi(ir.*, utils.lo(ir.*));
+                self.cycles += 8;
+            },
+
+            0x6F => {
+                // LD IYL, A
+                ir.* = utils.setLo(ir.*, self.getA());
+                self.cycles += 8;
+            },
+            0x68 => {
+                // LD IYL, B
+                ir.* = utils.setLo(ir.*, self.getB());
+                self.cycles += 8;
+            },
+            0x69 => {
+                // LD IYL, C
+                ir.* = utils.setLo(ir.*, self.getC());
+                self.cycles += 8;
+            },
+            0x6A => {
+                // LD IYL, D
+                ir.* = utils.setLo(ir.*, self.getD());
+                self.cycles += 8;
+            },
+            0x6B => {
+                // LD IYL, E
+                ir.* = utils.setLo(ir.*, self.getE());
+                self.cycles += 8;
+            },
+            0x2E => {
+                // LD IYL, n
+                ir.* = utils.setLo(ir.*, self.fetchByte());
+                self.cycles += 11;
+            },
+            0x6D => {
+                // LD IXL, IXL
+                ir.* = utils.setLo(ir.*, utils.lo(ir.*));
+                self.cycles += 8;
+            },
+            0x6C => {
+                // LD IXL, IXH
+                ir.* = utils.setLo(ir.*, utils.hi(ir.*));
+                self.cycles += 8;
+            },
+
+            // inc/dec block.
+            0x2C => {
+                // INC IYL
+                ir.* = utils.setLo(ir.*, self.inc(utils.lo(ir.*)));
+                self.cycles += 8;
+            },
+            0x2D => {
+                // DEC IYL
+                ir.* = utils.setLo(ir.*, self.dec(utils.lo(ir.*)));
+                self.cycles += 8;
+            },
+
+            // Load imm to (ix/iy + imm)
+            0x36 => {
+                // LD (IX+d), n
+                const d = self.fetchByte();
+                self.writeByte(ir.* + d, self.fetchByte());
+                self.cycles += 19;
+            },
+
+            // loading to registers.
+            0x46 => {
+                // LD B, (IX+d)
+                self.setB(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x4E => {
+                // LD C, (IX+d)
+                self.setC(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x56 => {
+                // LD D, (IX+d)
+                self.setD(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x5E => {
+                // LD E, (IX+d)
+                self.setE(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x66 => {
+                // LD H, (IX+d)
+                self.setH(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x6E => {
+                // LD L, (IX+d)
+                self.setL(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x7E => {
+                // LD A, (IX+d)
+                self.setA(self.memory[self.fetchByte() + ir.*]);
+                self.cycles += 19;
+            },
+            0x44 => {
+                // LD B, IYH
+                self.setB(utils.hi(ir.*));
+                self.cycles += 8;
+            },
+            0x4C => {
+                // LD C, IYH
+                self.setC(utils.hi(ir.*));
+                self.cycles += 8;
+            },
+            0x54 => {
+                // LD D, IYH
+                self.setD(utils.hi(ir.*));
+                self.cycles += 8;
+            },
+            0x5C => {
+                // LD E, IYH
+                self.setE(utils.hi(ir.*));
+                self.cycles += 8;
+            },
+            0x7C => {
+                // LD A, IYH
+                self.setA(utils.hi(ir.*));
+                self.cycles += 8;
+            },
+            0x45 => {
+                // LD B, IYL
+                self.setB(utils.lo(ir.*));
+                self.cycles += 8;
+            },
+            0x4D => {
+                // LD C, IYL
+                self.setC(utils.lo(ir.*));
+                self.cycles += 8;
+            },
+            0x55 => {
+                // LD D, IYL
+                self.setD(utils.lo(ir.*));
+                self.cycles += 8;
+            },
+            0x5D => {
+                // LD E, IYL
+                self.setE(utils.lo(ir.*));
+                self.cycles += 8;
+            },
+            0x7D => {
+                // LD A, IYL
+                self.setA(utils.lo(ir.*));
+                self.cycles += 8;
+            },
+
+            // ld (ix/iy + imm), r8
+            // H(0x70, w8(IDP,b)) H(0x71, w8(IDP,c))
+            // H(0x72, w8(IDP,d)) H(0x73, w8(IDP,e))
+            // H(0x74, w8(IDP,h)) H(0x75, w8(IDP,l))
+            // H(0x77, w8(IDP,a))
+            0x70 => {
+                // LD (IX+d), B
+                self.writeByte(ir.* + self.fetchByte(), self.getB());
+                self.cycles += 19;
+            },
+            0x71 => {
+                // LD (IX+d), C
+                self.writeByte(ir.* + self.fetchByte(), self.getC());
+                self.cycles += 19;
+            },
+            0x72 => {
+                // LD (IX+d), D
+                self.writeByte(ir.* + self.fetchByte(), self.getD());
+                self.cycles += 19;
+            },
+            0x73 => {
+                // LD (IX+d), E
+                self.writeByte(ir.* + self.fetchByte(), self.getE());
+                self.cycles += 19;
+            },
+            0x74 => {
+                // LD (IX+d), H
+                self.writeByte(ir.* + self.fetchByte(), self.getH());
+                self.cycles += 19;
+            },
+            0x75 => {
+                // LD (IX+d), L
+                self.writeByte(ir.* + self.fetchByte(), self.getL());
+                self.cycles += 19;
+            },
+            0x77 => {
+                // LD (IX+d), A
+                self.writeByte(ir.* + self.fetchByte(), self.getA());
+                self.cycles += 19;
+            },
+
             else => {
                 // std.debug.panic("Unknown IY/IX opcode: {0X:0>2}", .{opcode});
+                self.r -%= 1;
+                self.pc -%= 1;
                 self.executeOpcode(opcode);
-                self.r = self.r & 0x80 | (self.r + 1) & 0x7F;
+                // self.r = self.r & 0x80 | (self.r + 1) & 0x7F;
             },
         }
     }
@@ -3909,6 +4326,19 @@ pub const Flag = struct {
         } else {
             self.value &= 0b1111_1110;
         }
+    }
+
+    pub fn write(self: *Flag, writer: anytype) !void {
+        const s = if (self.isSign()) "1" else "0";
+        const z = if (self.isZero()) "1" else "0";
+        const f5 = if (self.isF5()) "1" else "0";
+        const h = if (self.isHalfCarry()) "1" else "0";
+        const f3 = if (self.isF3()) "1" else "0";
+        const p_v = if (self.isParityOverflow()) "1" else "0";
+        const n = if (self.isSubtract()) "1" else "0";
+        const c = if (self.isCarry()) "1" else "0";
+
+        try writer.print("S={s} Z={s} F5={s} H={s} F3={s} P/V={s} N={s} C={s}\n", .{ s, z, f5, h, f3, p_v, n, c });
     }
 
     pub fn dump(self: *Flag) void {

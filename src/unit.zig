@@ -22,6 +22,7 @@ const RunCmd = struct {
     test_name: ?[]const u8,
     opt_bench: bool,
     opt_both: bool,
+    opt_stop: bool,
 };
 
 const ShowCmd = struct {
@@ -58,12 +59,12 @@ pub fn main() !void {
             showTest(alloc, tests, results, cmd.test_name);
         },
         Commands.run => |cmd| {
-            runTests(alloc, tests, results, cmd);
+            try runTests(alloc, tests, results, cmd);
         },
     }
 }
 
-fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.json.Parsed([]TestResult), options: RunCmd) void {
+fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.json.Parsed([]TestResult), options: RunCmd) !void {
     if (options.opt_both) {
         std.debug.print("Running on both emulators...\n", .{});
         for (tests.value, 0..) |t, n| {
@@ -72,8 +73,39 @@ fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
                     continue;
                 }
             }
-            runTest(alloc, t, results.value[n]);
-            runBenchmark(t, results.value[n]);
+
+            var test_output = std.ArrayList(u8).init(alloc);
+            defer test_output.deinit();
+            runTest(alloc, t, results.value[n], test_output.writer()) catch {
+                std.debug.print("Failed on our emulator\n", .{});
+            };
+
+            var bench_output = std.ArrayList(u8).init(alloc);
+            defer bench_output.deinit();
+            runBenchmark(t, results.value[n], bench_output.writer()) catch {
+                std.debug.print("Failed on benchmark emulator\n", .{});
+            };
+
+            // TODO: allow mismatch detection even if ours is equals to the unit test
+            if (test_output.items.len > 0 and !std.mem.eql(u8, test_output.items, bench_output.items)) {
+                std.debug.print("Test {s} - output mismatch\n\n", .{t.name});
+
+                if (bench_output.items.len > 0) {
+                    const expected = try utils.indentString(alloc, bench_output.items, 4);
+                    defer alloc.free(expected);
+                    std.debug.print("  Expected:\n", .{});
+                    std.debug.print("{s}\n", .{expected});
+                }
+
+                const actual = try utils.indentString(alloc, test_output.items, 4);
+                defer alloc.free(actual);
+                std.debug.print("  Actual:\n", .{});
+                std.debug.print("{s}\n", .{actual});
+
+                if (options.opt_stop) {
+                    return;
+                }
+            }
         }
         return;
     }
@@ -86,8 +118,14 @@ fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
                     continue;
                 }
             }
+
+            var bench_output = std.ArrayList(u8).init(alloc);
+            defer bench_output.deinit();
+
             const r = results.value[n];
-            runBenchmark(t, r);
+            runBenchmark(t, r, bench_output.writer()) catch {
+                std.debug.print("Failed on benchmark emulator\n", .{});
+            };
         }
         return;
     }
@@ -99,7 +137,11 @@ fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
                 continue;
             }
         }
-        runTest(alloc, t, results.value[n]);
+        var test_output = std.ArrayList(u8).init(alloc);
+        defer test_output.deinit();
+        runTest(alloc, t, results.value[n], test_output.writer()) catch {
+            std.debug.print("Failed on our emulator\n", .{});
+        };
     }
 }
 
@@ -167,14 +209,14 @@ fn showTest(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
     }
 }
 
-fn runTest(alloc: Allocator, t: TestCase, result: TestResult) void {
+fn runTest(alloc: Allocator, t: TestCase, result: TestResult, writer: anytype) !void {
     var cpu = Z80.init(alloc);
     executeTest(&cpu, t, result);
-    compareResult(&cpu, result);
+    try compareResult(&cpu, result, writer);
 }
 
 fn executeTest(cpu: *Z80, t: TestCase, result: TestResult) void {
-    std.debug.print("Running test '{s}'...\n", .{t.name});
+    // std.debug.print("Running test '{s}'...\n", .{t.name});
     loadTest(cpu, t);
 
     const initial_cycles = cpu.cycles;
@@ -191,17 +233,17 @@ fn executeTest(cpu: *Z80, t: TestCase, result: TestResult) void {
     }
 }
 
-fn runBenchmark(t: TestCase, result: TestResult) void {
+fn runBenchmark(t: TestCase, result: TestResult, writer: anytype) !void {
     var cpu = c.Z80{};
     var memory = [_]u8{0} ** 0x10000;
 
     executeOnBenchmark(&cpu, t, result, &memory);
-    compareBenchResult(&cpu, result, &memory);
+    try compareBenchResult(&cpu, result, &memory, writer);
 }
 
 fn executeOnBenchmark(cpu: *c.Z80, t: TestCase, result: TestResult, memory: *[0x10000]u8) void {
     loadBench(cpu, t, memory);
-    std.debug.print("Running test '{s}'...\n", .{t.name});
+    // std.debug.print("Running test '{s}'...\n", .{t.name});
 
     const read = struct {
         fn read(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
@@ -252,87 +294,87 @@ fn executeOnBenchmark(cpu: *c.Z80, t: TestCase, result: TestResult, memory: *[0x
     }
 }
 
-fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) void {
+fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8, writer: anytype) !void {
     if (result.state.af != cpu.af.uint16_value) {
-        std.debug.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af.uint16_value });
-        var expected_flag = Flag.init(utils.lo(result.state.afDash));
+        try writer.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af.uint16_value });
+        var expected_flag = Flag.init(utils.lo(result.state.af));
         var actual_flag = Flag.init(utils.lo(cpu.af.uint16_value));
-        std.debug.print("  expected: ", .{});
-        expected_flag.dump();
-        std.debug.print("  actual:   ", .{});
-        actual_flag.dump();
+        try writer.print("  expected: ", .{});
+        try expected_flag.write(writer);
+        try writer.print("  actual:   ", .{});
+        try actual_flag.write(writer);
     }
 
     if (result.state.bc != cpu.bc.uint16_value) {
-        std.debug.print("BC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bc, cpu.bc.uint16_value });
+        try writer.print("BC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bc, cpu.bc.uint16_value });
     }
 
     if (result.state.de != cpu.de.uint16_value) {
-        std.debug.print("DE mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.de, cpu.de.uint16_value });
+        try writer.print("DE mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.de, cpu.de.uint16_value });
     }
 
     if (result.state.hl != cpu.hl.uint16_value) {
-        std.debug.print("HL mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hl, cpu.hl.uint16_value });
+        try writer.print("HL mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hl, cpu.hl.uint16_value });
     }
 
     if (result.state.afDash != cpu.af_.uint16_value) {
-        std.debug.print("AF' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.afDash, cpu.af_.uint16_value });
+        try writer.print("AF' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.afDash, cpu.af_.uint16_value });
     }
 
     if (result.state.bcDash != cpu.bc_.uint16_value) {
-        std.debug.print("BC' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bcDash, cpu.bc_.uint16_value });
+        try writer.print("BC' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bcDash, cpu.bc_.uint16_value });
     }
 
     if (result.state.deDash != cpu.de_.uint16_value) {
-        std.debug.print("DE' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.deDash, cpu.de_.uint16_value });
+        try writer.print("DE' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.deDash, cpu.de_.uint16_value });
     }
 
     if (result.state.hlDash != cpu.hl_.uint16_value) {
-        std.debug.print("HL' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hlDash, cpu.hl_.uint16_value });
+        try writer.print("HL' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hlDash, cpu.hl_.uint16_value });
     }
 
     // if (result.state.ix != cpu.ix.uint16_value) {
-    //     std.debug.print("IX mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.ix, cpu.ix.uint16_value });
+    //     try writer.print("IX mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.ix, cpu.ix.uint16_value });
     // }
     //
     // if (result.state.iy != cpu.iy.uint16_value) {
-    //     std.debug.print("IY mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.iy, cpu.iy.uint16_value });
+    //     try writer.print("IY mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.iy, cpu.iy.uint16_value });
     // }
 
     if (result.state.sp != cpu.sp.uint16_value) {
-        std.debug.print("SP mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.sp, cpu.sp.uint16_value });
+        try writer.print("SP mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.sp, cpu.sp.uint16_value });
     }
 
     if (result.state.pc != cpu.pc.uint16_value) {
-        std.debug.print("PC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.pc, cpu.pc.uint16_value });
+        try writer.print("PC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.pc, cpu.pc.uint16_value });
     }
 
     if (result.state.i != cpu.i) {
-        std.debug.print("I mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.i, cpu.i });
+        try writer.print("I mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.i, cpu.i });
     }
 
     if (result.state.r != cpu.r) {
-        std.debug.print("R mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.r, cpu.r });
+        try writer.print("R mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.r, cpu.r });
     }
 
     // if (result.state.iff1 != cpu.iff1) {
-    //     std.debug.print("IFF1 mismatch: expected {}, got {}\n", .{ result.state.iff1, cpu.iff1 });
+    //     try writer.print("IFF1 mismatch: expected {}, got {}\n", .{ result.state.iff1, cpu.iff1 });
     // }
     //
     // if (result.state.iff2 != cpu.iff2) {
-    //     std.debug.print("IFF2 mismatch: expected {}, got {}\n", .{ result.state.iff2, cpu.iff2 });
+    //     try writer.print("IFF2 mismatch: expected {}, got {}\n", .{ result.state.iff2, cpu.iff2 });
     // }
     //
     // if (result.state.im != cpu.im) {
-    //     std.debug.print("IM mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.im, cpu.im });
+    //     try writer.print("IM mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.im, cpu.im });
     // }
     //
     // if (result.state.halted != cpu.halt_line) {
-    //     std.debug.print("Halted mismatch: expected {}, got {}\n", .{ result.state.halted, cpu.halt_line });
+    //     try writer.print("Halted mismatch: expected {}, got {}\n", .{ result.state.halted, cpu.halt_line });
     // }
     //
     // if (result.state.tStates != cpu.cycles - 1) {
-    //     std.debug.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
+    //     try writer.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
     // }
     //
 
@@ -341,10 +383,10 @@ fn compareBenchResult(cpu: *c.Z80, result: TestResult, memory: *[0x10000]u8) voi
             const expected = m.data;
             const actual = memory[m.address .. m.address + expected.len];
             if (!std.mem.eql(u8, expected, actual)) {
-                std.debug.print("Memory mismatch at 0x{X:0>4}:\n", .{m.address});
+                try writer.print("Memory mismatch at 0x{X:0>4}:\n", .{m.address});
                 for (expected, actual) |e, a| {
                     if (e != a) {
-                        std.debug.print("  Expected 0x{X:0>2}, got 0x{X:0>2}\n", .{ e, a });
+                        try writer.print("  Expected 0x{X:0>2}, got 0x{X:0>2}\n", .{ e, a });
                     }
                 }
             }
@@ -378,88 +420,88 @@ fn loadBench(cpu: *c.Z80, t: TestCase, memory: *[0x10000]u8) void {
     }
 }
 
-fn compareResult(cpu: *Z80, result: TestResult) void {
+fn compareResult(cpu: *Z80, result: TestResult, writer: anytype) !void {
     if (result.state.af != cpu.af) {
-        std.debug.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af });
-        var expected_flag = Flag.init(utils.lo(result.state.afDash));
+        try writer.print("AF mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.af, cpu.af });
+        var expected_flag = Flag.init(utils.lo(result.state.af));
         var actual_flag = Flag.init(utils.lo(cpu.getF()));
-        std.debug.print("  expected: ", .{});
-        expected_flag.dump();
-        std.debug.print("  actual:   ", .{});
-        actual_flag.dump();
+        try writer.print("  expected: ", .{});
+        try expected_flag.write(writer);
+        try writer.print("  actual:   ", .{});
+        try actual_flag.write(writer);
     }
 
     if (result.state.bc != cpu.bc) {
-        std.debug.print("BC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bc, cpu.bc });
+        try writer.print("BC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bc, cpu.bc });
     }
 
     if (result.state.de != cpu.de) {
-        std.debug.print("DE mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.de, cpu.de });
+        try writer.print("DE mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.de, cpu.de });
     }
 
     if (result.state.hl != cpu.hl) {
-        std.debug.print("HL mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hl, cpu.hl });
+        try writer.print("HL mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hl, cpu.hl });
     }
 
     if (result.state.afDash != cpu.af_) {
-        std.debug.print("AF' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.afDash, cpu.af_ });
+        try writer.print("AF' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.afDash, cpu.af_ });
     }
 
     if (result.state.bcDash != cpu.bc_) {
-        std.debug.print("BC' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bcDash, cpu.bc_ });
+        try writer.print("BC' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.bcDash, cpu.bc_ });
     }
 
     if (result.state.deDash != cpu.de_) {
-        std.debug.print("DE' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.deDash, cpu.de_ });
+        try writer.print("DE' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.deDash, cpu.de_ });
     }
 
     if (result.state.hlDash != cpu.hl_) {
-        std.debug.print("HL' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hlDash, cpu.hl_ });
+        try writer.print("HL' mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.hlDash, cpu.hl_ });
     }
 
     if (result.state.ix != cpu.ix) {
-        std.debug.print("IX mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.ix, cpu.ix });
+        try writer.print("IX mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.ix, cpu.ix });
     }
 
     if (result.state.iy != cpu.iy) {
-        std.debug.print("IY mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.iy, cpu.iy });
+        try writer.print("IY mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.iy, cpu.iy });
     }
 
     if (result.state.sp != cpu.sp) {
-        std.debug.print("SP mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.sp, cpu.sp });
+        try writer.print("SP mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.sp, cpu.sp });
     }
 
     if (result.state.pc != cpu.pc) {
-        std.debug.print("PC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.pc, cpu.pc });
+        try writer.print("PC mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.pc, cpu.pc });
     }
 
     if (result.state.i != cpu.i) {
-        std.debug.print("I mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.i, cpu.i });
+        try writer.print("I mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.i, cpu.i });
     }
 
     if (result.state.r != cpu.r) {
-        std.debug.print("R mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.r, cpu.r });
+        try writer.print("R mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.r, cpu.r });
     }
 
     if (result.state.iff1 != cpu.iff1) {
-        std.debug.print("IFF1 mismatch: expected {}, got {}\n", .{ result.state.iff1, cpu.iff1 });
+        try writer.print("IFF1 mismatch: expected {}, got {}\n", .{ result.state.iff1, cpu.iff1 });
     }
 
     if (result.state.iff2 != cpu.iff2) {
-        std.debug.print("IFF2 mismatch: expected {}, got {}\n", .{ result.state.iff2, cpu.iff2 });
+        try writer.print("IFF2 mismatch: expected {}, got {}\n", .{ result.state.iff2, cpu.iff2 });
     }
 
     if (result.state.im != cpu.im) {
-        std.debug.print("IM mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.im, cpu.im });
+        try writer.print("IM mismatch: expected 0x{X:0>4}, got 0x{X:0>4}\n", .{ result.state.im, cpu.im });
     }
 
     if (result.state.halted != cpu.halt) {
-        std.debug.print("Halted mismatch: expected {}, got {}\n", .{ result.state.halted, cpu.halt });
+        try writer.print("Halted mismatch: expected {}, got {}\n", .{ result.state.halted, cpu.halt });
     }
 
     // tStates are not cycles
     // if (result.state.tStates != cpu.cycles - 1) {
-    //     std.debug.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
+    //     try writer.print("TStates mismatch: expected {d}, got {d}\n", .{ result.state.tStates, cpu.cycles - 1 });
     // }
 
     if (result.memory) |mem| {
@@ -467,10 +509,10 @@ fn compareResult(cpu: *Z80, result: TestResult) void {
             const expected = m.data;
             const actual = cpu.memory[m.address .. m.address + expected.len];
             if (!std.mem.eql(u8, expected, actual)) {
-                std.debug.print("Memory mismatch at 0x{X:0>4}:\n", .{m.address});
+                try writer.print("Memory mismatch at 0x{X:0>4}:\n", .{m.address});
                 for (expected, actual) |e, a| {
                     if (e != a) {
-                        std.debug.print("  Expected 0x{X:0>2}, got 0x{X:0>2}\n", .{ e, a });
+                        try writer.print("  Expected 0x{X:0>2}, got 0x{X:0>2}\n", .{ e, a });
                     }
                 }
             }

@@ -174,6 +174,33 @@ pub fn lo(value: u16) u8 {
     return @as(u8, @intCast(value & 0xFF));
 }
 
+pub fn setHi(value: u16, hi_val: u8) u16 {
+    return (value & 0x00FF) | (@as(u16, @intCast(hi_val)) << 8);
+}
+
+pub fn setLo(value: u16, lo_val: u8) u16 {
+    return (value & 0xFF00) | @as(u16, @intCast(lo_val));
+}
+
 pub fn u16FromBytes(low: u8, high: u8) u16 {
     return @as(u16, @intCast(high)) << 8 | @as(u16, @intCast(low));
+}
+
+pub fn indentString(allocator: std.mem.Allocator, input: []const u8, indent_size: usize) ![]u8 {
+    var result = std.ArrayList(u8).init(allocator);
+    defer result.deinit();
+
+    var lines = std.mem.split(u8, input, "\n");
+    var first_line = true;
+
+    while (lines.next()) |line| {
+        if (!first_line) {
+            try result.append('\n');
+        }
+        try result.appendNTimes(' ', indent_size);
+        try result.appendSlice(line);
+        first_line = false;
+    }
+
+    return result.toOwnedSlice();
 }
