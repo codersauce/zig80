@@ -231,13 +231,13 @@ fn cpmHook(address: u16, cv: u8, de: u16) u8 {
         const char: u8 = @intCast(de & 0xFF);
         switch (char) {
             0x0A => {
-                std.debug.print("\n", .{});
+                // std.debug.print("\n", .{});
             },
             0x0D => {
                 // do nothing?
             },
             else => {
-                std.debug.print("{c}", .{char});
+                // std.debug.print("{c}", .{char});
             },
         }
     } else if (cv == 9) {
@@ -253,11 +253,11 @@ fn cpmHook(address: u16, cv: u8, de: u16) u8 {
             if (char == 0x24) {
                 return 0xC9;
             } else if (char == 0x0A) {
-                std.debug.print("\n", .{});
+                // std.debug.print("\n", .{});
             } else if (char == 0x0D) {
                 continue;
             } else {
-                std.debug.print("{c}", .{char});
+                // std.debug.print("{c}", .{char});
             }
         }
     }
@@ -398,18 +398,9 @@ fn dumpCpuState(alloc: Allocator, cpu: *c.Z80) ![]const u8 {
 }
 
 fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
-    var bench_state_bef: []const u8 = undefined;
-    var cpu_state_bef: []const u8 = undefined;
-
     var bench_pc_bef: u16 = 0;
     var cpu_pc_bef: u16 = 0;
     if (o.compare) {
-        bench_state_bef = try dumpCpuState(alloc, bench_cpu);
-        defer alloc.free(bench_state_bef);
-
-        cpu_state_bef = try cpu.dumpState();
-        defer alloc.free(cpu_state_bef);
-
         bench_pc_bef = @intCast(bench_cpu.pc.uint16_value);
         cpu_pc_bef = cpu.pc;
     }
@@ -449,13 +440,13 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
     cpu.run(1);
 
     if (o.compare) {
-        const bench_state = try dumpCpuState(alloc, bench_cpu);
-        defer alloc.free(bench_state);
-
-        const cpu_state = try cpu.dumpState();
-        defer alloc.free(cpu_state);
-
         if (!try compare(alloc, cpu, bench_cpu)) {
+            const bench_state = try dumpCpuState(alloc, bench_cpu);
+            defer alloc.free(bench_state);
+
+            const cpu_state = try cpu.dumpState();
+            defer cpu.alloc.free(cpu_state);
+
             std.debug.print("[ours]   op_code = {X:0>2} last_bytes =", .{cpu_opcode});
             utils.dumpMemoryWithPointer(&cpu.memory, cpu.pc, 20);
             std.debug.print("\n", .{});

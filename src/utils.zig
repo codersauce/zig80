@@ -101,20 +101,12 @@ pub fn extractZip(alloc: Allocator, archive_path: []const u8, outdir_path: []con
 }
 
 pub fn countSetBits(v: u8) u32 {
-    var count: u32 = 0;
-    var n = v;
-
-    while (n > 0) {
-        count += 1;
-        n &= n - 1;
-    }
-
-    // std.debug.print("countSetBits for {0d} = {0b} = {1d}\n", .{ v, count });
-    return count;
+    return @popCount(v);
 }
 
 pub fn parity(v: u8) bool {
-    return countSetBits(v) % 2 == 0;
+    // true when even parity (even number of set bits)
+    return (@popCount(v) & 1) == 0;
 }
 
 pub fn dumpMemoryWithPointer(memory: []const u8, pc: u16, range: u8) void {
