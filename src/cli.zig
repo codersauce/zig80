@@ -89,6 +89,14 @@ pub fn parse(comptime T: type, args: []const [:0]const u8) !?T {
                                         fields_seen[i] = true;
                                         @field(r, field.name) = true;
                                     },
+                                    ?u32 => {
+                                        fields_seen[i] = true;
+                                        const value = it.next();
+                                        if (value == null) {
+                                            return error.InvalidParam;
+                                        }
+                                        @field(r, field.name) = try std.fmt.parseInt(u32, value.?, 10);
+                                    },
                                     else => |subtype| {
                                         std.log.err("Unsupported option type '{any}' for '{s}'", .{ subtype, field.name });
                                         return error.UnsupportedType;
@@ -111,17 +119,27 @@ pub fn parse(comptime T: type, args: []const [:0]const u8) !?T {
                                         fields_seen[i] = true;
                                         @field(r, field.name) = arg;
                                     },
+                                    ?u32 => {
+                                        fields_seen[i] = true;
+                                        @field(r, field.name) = try std.fmt.parseInt(u32, arg, 10);
+                                    },
                                     bool => {
                                         return error.InvalidParam;
                                     },
-                                    else => |subtype| {
-                                        const res = try parse(subtype, args);
-                                        if (res == null) {
-                                            std.log.err("res: {any}\n", .{res});
+                                    else => {
+                                        // Check if it's a union or struct type that should be recursively parsed
+                                        if (@typeInfo(field.type) == .@"union" or @typeInfo(field.type) == .@"struct") {
+                                            const res = try parse(field.type, args);
+                                            if (res == null) {
+                                                std.log.err("res: {any}\n", .{res});
+                                                return error.UnsupportedType;
+                                            }
+                                            fields_seen[i] = true;
+                                            @field(r, field.name) = res.?;
+                                        } else {
+                                            std.log.err("Unsupported positional type '{any}' for '{s}'", .{ field.type, field.name });
                                             return error.UnsupportedType;
                                         }
-                                        fields_seen[i] = true;
-                                        @field(r, field.name) = res.?;
                                     },
                                 }
                             }
