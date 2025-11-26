@@ -3007,17 +3007,7 @@ pub const Z80 = struct {
             },
             0xFD => {
                 // IY Extended Instructions
-                const iy_instruction = IY_TABLE[self.peekByte()];
-                if (iy_instruction == null) {
-                    self.saveState("/tmp/cpu.json");
-                    std.debug.panic("Unhandled 0xFD {X:0>2}\n", .{self.peekByte()});
-                    self.cycles += 4;
-                    self.execute();
-                } else {
-                    _ = self.fetchOpcode();
-                    _ = iy_instruction.?(self);
-                    // std.debug.print("IY instruction: {any} {any}\n", .{ res, iy_instruction });
-                }
+                self.exec_ind(self.fetchByte(), &self.iy);
 
                 // const iy_opcode = self.fetchByte();
                 // switch (iy_opcode) {
