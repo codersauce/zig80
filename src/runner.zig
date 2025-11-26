@@ -99,12 +99,12 @@ fn parseState(alloc: Allocator, node: json.Value) !State {
 }
 
 fn parseRamEntries(alloc: Allocator, entries: std.ArrayList(json.Value)) ![]RamEntry {
-    var results = std.ArrayList(RamEntry).init(alloc);
-    defer results.deinit();
+    var results = std.ArrayList(RamEntry){};
+    defer results.deinit(alloc);
 
     for (entries.items) |item| {
         const entry = item.array.items;
-        try results.append(RamEntry{
+        try results.append(alloc, RamEntry{
             .address = @as(u16, @intCast(entry[0].integer)),
             .value = @as(u8, @intCast(entry[1].integer)),
         });
@@ -114,8 +114,8 @@ fn parseRamEntries(alloc: Allocator, entries: std.ArrayList(json.Value)) ![]RamE
 }
 
 fn parseCycles(alloc: Allocator, entries: std.ArrayList(json.Value)) ![]Cycle {
-    var results = std.ArrayList(Cycle).init(alloc);
-    defer results.deinit();
+    var results = std.ArrayList(Cycle){};
+    defer results.deinit(alloc);
 
     for (entries.items) |item| {
         const entry = item.array.items;
@@ -124,7 +124,7 @@ fn parseCycles(alloc: Allocator, entries: std.ArrayList(json.Value)) ![]Cycle {
             else => undefined,
         };
 
-        try results.append(Cycle{
+        try results.append(alloc, Cycle{
             .address = @as(u16, @intCast(entry[0].integer)),
             .value = value,
             .code = entry[2].string,

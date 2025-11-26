@@ -135,16 +135,16 @@ pub const Z80 = struct {
 
     pub fn saveState(self: *Z80, path: []const u8) void {
         self.pc -= 1;
-        var memory_map = std.ArrayList(u8).init(self.alloc);
-        defer memory_map.deinit();
+        var memory_map = std.ArrayList(u8){};
+        defer memory_map.deinit(self.alloc);
 
         for (self.memory, 0..) |byte, i| {
             if (byte != 0) {
                 const addr_hi: u8 = utils.hi(@intCast(i));
                 const addr_lo: u8 = utils.lo(@intCast(i));
-                memory_map.append(addr_hi) catch {};
-                memory_map.append(addr_lo) catch {};
-                memory_map.append(byte) catch {};
+                memory_map.append(self.alloc, addr_hi) catch {};
+                memory_map.append(self.alloc, addr_lo) catch {};
+                memory_map.append(self.alloc, byte) catch {};
             }
         }
 
@@ -174,7 +174,12 @@ pub const Z80 = struct {
             .cycles = self.cycles,
             .pending_opcode = self.pending_opcode,
         };
-        std.json.stringify(data, .{}, f.writer()) catch {
+        const json_output = std.json.Stringify.valueAlloc(self.alloc, data, .{}) catch {
+            std.debug.print("Failed to serialize state\n", .{});
+            return;
+        };
+        defer self.alloc.free(json_output);
+        f.writeAll(json_output) catch {
             std.debug.print("Failed to save state\n", .{});
         };
     }
@@ -183,7 +188,7 @@ pub const Z80 = struct {
         var f = try std.fs.cwd().openFile(path, .{});
         defer f.close();
 
-        const data = try f.reader().readAllAlloc(self.alloc, 1_000_000);
+        const data = try f.readToEndAlloc(self.alloc, 1_000_000);
         const json = try std.json.parseFromSlice(SaveData, self.alloc, data, .{});
         defer json.deinit();
 
@@ -753,7 +758,7 @@ pub const Z80 = struct {
         //    rhs = pfoverflow_rhs = | NF
         // pf_overflow_rhs = | NF
         // (((zuint##width)((lhs ^ rhs) & (lhs ^ result)) >> (width - 3)) & PF)
-        // 		| PF_OVERFLOW(16, t, HL, pf_overflow_rhs)		    \
+        // | PF_OVERFLOW(16, t, HL, pf_overflow_rhs)
 
         flags.setParityOverflow((result ^ @as(u16, @intCast(self.hl)) ^ @as(u16, @intCast(result >> 8)) >> 8) & 0x80 != 0);
         flags.setSubtract(true);
@@ -1300,7 +1305,11 @@ pub const Z80 = struct {
     pub fn dumpFlags(self: *Z80) !void {
         var flag = self.getFlag();
         std.debug.print("F: {X:0>2} ", .{self.getF()});
-        try flag.write(std.io.getStdOut().writer());
+        const stdout = std.fs.File.stdout();
+        var buffer: [256]u8 = undefined;
+        var file_writer = stdout.writer(&buffer);
+        try flag.write(&file_writer.interface);
+        file_writer.interface.flush() catch {};
     }
 
     fn isZero(self: *Z80) bool {
@@ -1762,7 +1771,7 @@ pub const Z80 = struct {
                 self.setA(~self.getA());
 
                 //                       SZ5H3VNC
-                // CPL                   --*1*-1-	F5, F3 from A register
+                // CPL                   --*1*-1- F5, F3 from A register
                 var flags = self.getFlag();
                 flags.setHalfCarry(true);
                 flags.setSubtract(true);
@@ -3090,19 +3099,19 @@ pub const Z80 = struct {
     }
 
     pub fn dumpMemory(self: *Z80) ![]const u8 {
-        var res = std.ArrayList(u8).init(self.alloc);
-        defer res.deinit();
+        var res = std.ArrayList(u8){};
+        defer res.deinit(self.alloc);
 
         for (self.memory, 0..) |byte, i| {
             if (byte != 0) {
                 const s = try std.fmt.allocPrint(self.alloc, "   {d}: {d}\n", .{ i, byte });
                 defer self.alloc.free(s);
 
-                try res.appendSlice(s);
+                try res.appendSlice(self.alloc, s);
             }
         }
 
-        return res.toOwnedSlice();
+        return res.toOwnedSlice(self.alloc);
     }
 
     // 0xCB - Bit Instructions
@@ -4228,8 +4237,8 @@ pub const Flag = struct {
         return self.value;
     }
 
-    //  Bit 	7 	6 	5 	4 	3 	2 	1 	0
-    // Flag 	S 	Z 	F5 	H 	F3 	P/V 	N 	C
+    //  Bit     7     6     5     4     3     2     1     0
+    // Flag     S     Z     F5     H     F3     P/V     N     C
     // Hex      80 40 20 10 08 04 02 01
 
     pub fn isSign(self: *Flag) bool {
