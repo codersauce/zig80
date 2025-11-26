@@ -41,7 +41,9 @@ pub fn download(alloc: Allocator, url: []const u8, outname: []const u8) !void {
     try request.wait();
 
     const content_length = request.response.content_length.?;
-    const body = try request.reader().readAllAlloc(alloc, content_length);
+    var transfer_buffer: [8192]u8 = undefined;
+    const reader = request.reader(&transfer_buffer);
+    const body = try reader.readAlloc(alloc, content_length);
     defer alloc.free(body);
 
     std.fs.cwd().makeDir(std.fs.path.dirname(outname).?) catch {};
@@ -187,20 +189,20 @@ pub fn u16FromBytes(low: u8, high: u8) u16 {
 }
 
 pub fn indentString(allocator: std.mem.Allocator, input: []const u8, indent_size: usize) ![]u8 {
-    var result = std.ArrayList(u8).init(allocator);
-    defer result.deinit();
+    var result = std.ArrayList(u8){};
+    defer result.deinit(allocator);
 
-    var lines = std.mem.split(u8, input, "\n");
+    var lines = std.mem.splitSequence(u8, input, "\n");
     var first_line = true;
 
     while (lines.next()) |line| {
         if (!first_line) {
-            try result.append('\n');
+            try result.append(allocator, '\n');
         }
-        try result.appendNTimes(' ', indent_size);
-        try result.appendSlice(line);
+        try result.appendNTimes(allocator, ' ', indent_size);
+        try result.appendSlice(allocator, line);
         first_line = false;
     }
 
-    return result.toOwnedSlice();
+    return result.toOwnedSlice(allocator);
 }

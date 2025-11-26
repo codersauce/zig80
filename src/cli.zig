@@ -28,10 +28,14 @@ pub fn main() !void {
     std.debug.print("{any}\n", .{cli});
 }
 
-pub fn parse(comptime T: type, args: [][]const u8) !?T {
+pub fn parse(comptime T: type, args: []const [:0]const u8) !?T {
     for (args) |arg| {
         if (std.mem.eql(u8, arg, "--help")) {
-            try help_for(T, std.io.getStdOut().writer());
+            const stdout = std.fs.File.stdout();
+            var buffer: [4096]u8 = undefined;
+            var file_writer = stdout.writer(&buffer);
+            try help_for(T, &file_writer.interface);
+            file_writer.interface.flush() catch {};
             return null;
         }
     }
@@ -39,7 +43,7 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
     var r: T = undefined;
 
     switch (@typeInfo(T)) {
-        .Union => |data| {
+        .@"union" => |data| {
             inline for (data.fields) |field| {
                 if (std.mem.eql(u8, args[1], field.name)) {
                     // let's assemble the subcommand structure
@@ -48,7 +52,7 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
                 }
             }
         },
-        .Struct => |info| {
+        .@"struct" => |info| {
             var fields_seen = [_]bool{false} ** info.fields.len;
             var it = ArgIterator.init(args);
             var pos: usize = 0;
@@ -137,14 +141,13 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
     return r;
 }
 
-fn fillDefaultStructValues(comptime T: type, r: *T, fields_seen: *[@typeInfo(T).Struct.fields.len]bool) !void {
-    inline for (@typeInfo(T).Struct.fields, 0..) |field, i| {
+fn fillDefaultStructValues(comptime T: type, r: *T, fields_seen: *[@typeInfo(T).@"struct".fields.len]bool) !void {
+    inline for (@typeInfo(T).@"struct".fields, 0..) |field, i| {
         if (!fields_seen[i]) {
-            if (field.default_value) |default_ptr| {
-                const default = @as(*align(1) const field.type, @ptrCast(default_ptr)).*;
+            if (field.defaultValue()) |default| {
                 @field(r, field.name) = default;
             } else {
-                if (@typeInfo(field.type) == .Optional) {
+                if (@typeInfo(field.type) == .optional) {
                     @field(r, field.name) = null;
                 } else if (field.type == bool) {
                     @field(r, field.name) = false;
@@ -158,17 +161,17 @@ fn fillDefaultStructValues(comptime T: type, r: *T, fields_seen: *[@typeInfo(T).
 }
 
 const ArgIterator = struct {
-    args: [][]const u8,
+    args: []const [:0]const u8,
     index: usize,
 
-    fn init(args: [][]const u8) ArgIterator {
+    fn init(args: []const [:0]const u8) ArgIterator {
         return ArgIterator{
             .args = args,
             .index = 1,
         };
     }
 
-    fn next(self: *ArgIterator) ?[]const u8 {
+    fn next(self: *ArgIterator) ?[:0]const u8 {
         if (self.index >= self.args.len) {
             return null;
         }
@@ -177,7 +180,7 @@ const ArgIterator = struct {
         return arg;
     }
 
-    fn peek(self: *ArgIterator) ?[]const u8 {
+    fn peek(self: *ArgIterator) ?[:0]const u8 {
         if (self.index >= self.args.len) {
             return null;
         }
@@ -194,7 +197,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     var max_arg_len: u32 = 0;
     inline for (fields) |field| {
         if (std.mem.startsWith(u8, field.name, "opt_")) {
-            std.debug.print("len: {d}\n", .{field.name});
+            std.debug.print("len: {s}\n", .{field.name});
             if (field.name.len < 4) {
                 std.log.err("Invalid field len '{s}'\n", .{field.name});
             } else {
@@ -216,7 +219,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     var command = false;
     inline for (fields) |field| {
         if (std.mem.startsWith(u8, field.name, "opt_")) {
-            if (@typeInfo(field.type) == .Optional or field.type == bool) {
+            if (@typeInfo(field.type) == .optional or field.type == bool) {
                 optionals = true;
             } else {
                 if (field.name.len < 4) {
@@ -233,11 +236,11 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                 }
             }
         } else {
-            if (@typeInfo(field.type) == .Union) {
+            if (@typeInfo(field.type) == .@"union") {
                 command = true;
                 try writer.print(" <COMMAND>", .{});
             } else {
-                if (@typeInfo(field.type) == .Optional or field.type == bool) {
+                if (@typeInfo(field.type) == .optional or field.type == bool) {
                     try writer.print(" [", .{});
                 } else {
                     try writer.print(" <", .{});
@@ -245,7 +248,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                 for (field.name) |c| {
                     try writer.print("{c}", .{std.ascii.toUpper(c)});
                 }
-                if (@typeInfo(field.type) == .Optional or field.type == bool) {
+                if (@typeInfo(field.type) == .optional or field.type == bool) {
                     try writer.print("]", .{});
                 } else {
                     try writer.print(">", .{});
@@ -263,7 +266,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     if (command) {
         try writer.print("\nCommands:", .{});
         inline for (fields) |field| {
-            if (@typeInfo(field.type) == .Union) {
+            if (@typeInfo(field.type) == .@"union") {
                 const subfields = std.meta.fields(field.type);
                 var max_command_len: u8 = 0;
 
@@ -298,7 +301,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                 // try writer.print("\n  --{s}", .{field.name[4..]});
 
                 if (field.type != bool) {
-                    if (@typeInfo(field.type) == .Optional) {
+                    if (@typeInfo(field.type) == .optional) {
                         try writer.print(" [", .{});
                     } else {
                         try writer.print(" <", .{});
@@ -308,7 +311,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                     //     try writer.print("{c}", .{std.ascii.toUpper(c)});
                     // }
 
-                    if (@typeInfo(field.type) == .Optional) {
+                    if (@typeInfo(field.type) == .optional) {
                         try writer.print("]", .{});
                     } else {
                         try writer.print(">", .{});
@@ -341,7 +344,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                     header = false;
                     try writer.print("\n\nArguments:", .{});
                 }
-                if (@typeInfo(field.type) == .Optional) {
+                if (@typeInfo(field.type) == .optional) {
                     try writer.print("\n  [", .{});
                 } else {
                     try writer.print("\n  <", .{});
@@ -350,7 +353,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                     try writer.print("{c}", .{std.ascii.toUpper(c)});
                 }
 
-                if (@typeInfo(field.type) == .Optional) {
+                if (@typeInfo(field.type) == .optional) {
                     try writer.print("]", .{});
                 } else {
                     try writer.print(">", .{});

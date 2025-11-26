@@ -74,15 +74,15 @@ fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
                 }
             }
 
-            var test_output = std.ArrayList(u8).init(alloc);
-            defer test_output.deinit();
-            runTest(alloc, t, results.value[n], test_output.writer()) catch {
+            var test_output = std.ArrayList(u8){};
+            defer test_output.deinit(alloc);
+            runTest(alloc, t, results.value[n], test_output.writer(alloc)) catch {
                 std.debug.print("Failed on our emulator\n", .{});
             };
 
-            var bench_output = std.ArrayList(u8).init(alloc);
-            defer bench_output.deinit();
-            runBenchmark(t, results.value[n], bench_output.writer()) catch {
+            var bench_output = std.ArrayList(u8){};
+            defer bench_output.deinit(alloc);
+            runBenchmark(t, results.value[n], bench_output.writer(alloc)) catch {
                 std.debug.print("Failed on benchmark emulator\n", .{});
             };
 
@@ -119,11 +119,11 @@ fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
                 }
             }
 
-            var bench_output = std.ArrayList(u8).init(alloc);
-            defer bench_output.deinit();
+            var bench_output = std.ArrayList(u8){};
+            defer bench_output.deinit(alloc);
 
             const r = results.value[n];
-            runBenchmark(t, r, bench_output.writer()) catch {
+            runBenchmark(t, r, bench_output.writer(alloc)) catch {
                 std.debug.print("Failed on benchmark emulator\n", .{});
             };
         }
@@ -137,9 +137,9 @@ fn runTests(alloc: Allocator, tests: std.json.Parsed([]TestCase), results: std.j
                 continue;
             }
         }
-        var test_output = std.ArrayList(u8).init(alloc);
-        defer test_output.deinit();
-        runTest(alloc, t, results.value[n], test_output.writer()) catch {
+        var test_output = std.ArrayList(u8){};
+        defer test_output.deinit(alloc);
+        runTest(alloc, t, results.value[n], test_output.writer(alloc)) catch {
             std.debug.print("Failed on our emulator\n", .{});
         };
     }
@@ -246,21 +246,21 @@ fn executeOnBenchmark(cpu: *c.Z80, t: TestCase, result: TestResult, memory: *[0x
     // std.debug.print("Running test '{s}'...\n", .{t.name});
 
     const read = struct {
-        fn read(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+        fn read(context: ?*anyopaque, address: c_ushort) callconv(.c) u8 {
             const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
             return mem[address];
         }
     }.read;
 
     const write = struct {
-        fn write(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+        fn write(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.c) void {
             const mem: *[0x10000]u8 = @ptrCast(@alignCast(context.?));
             mem[address] = value;
         }
     }.write;
 
     const writePort = struct {
-        fn writePort(context: ?*anyopaque, port: c_ushort, value: u8) callconv(.C) void {
+        fn writePort(context: ?*anyopaque, port: c_ushort, value: u8) callconv(.c) void {
             _ = context;
             std.debug.print("Writing to port 0x{X:0>2}\n", .{port});
             std.debug.print("  Value: 0x{X:0>2}\n", .{value});
@@ -268,7 +268,7 @@ fn executeOnBenchmark(cpu: *c.Z80, t: TestCase, result: TestResult, memory: *[0x
     }.writePort;
 
     const readPort = struct {
-        fn readPort(context: ?*anyopaque, port: c_ushort) callconv(.C) u8 {
+        fn readPort(context: ?*anyopaque, port: c_ushort) callconv(.c) u8 {
             _ = context;
             std.debug.print("Reading from port 0x{X:0>2}\n", .{port});
             return 0;
@@ -524,7 +524,7 @@ fn loadTestResults(alloc: Allocator) !std.json.Parsed([]TestResult) {
     const test_file = try std.fs.cwd().openFile("src/tests/tests.expected.json", .{});
     defer test_file.close();
 
-    const test_json = try test_file.reader().readAllAlloc(alloc, 2_000_000);
+    const test_json = try test_file.readToEndAlloc(alloc, 2_000_000);
     defer alloc.free(test_json);
 
     const tests = try std.json.parseFromSlice([]TestResult, alloc, test_json, .{ .allocate = .alloc_always });
@@ -535,7 +535,7 @@ fn loadTests(alloc: Allocator) !std.json.Parsed([]TestCase) {
     const test_file = try std.fs.cwd().openFile("src/tests/tests.in.json", .{});
     defer test_file.close();
 
-    const test_json = try test_file.reader().readAllAlloc(alloc, 1_000_000);
+    const test_json = try test_file.readToEndAlloc(alloc, 1_000_000);
     defer alloc.free(test_json);
 
     const tests = try std.json.parseFromSlice([]TestCase, alloc, test_json, .{ .allocate = .alloc_always });
