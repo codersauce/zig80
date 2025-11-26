@@ -214,8 +214,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     var max_option_len: u32 = 0;
     var max_arg_len: u32 = 0;
     inline for (fields) |field| {
-        if (std.mem.startsWith(u8, field.name, "opt_")) {
-            std.debug.print("len: {s}\n", .{field.name});
+        if (comptime std.mem.startsWith(u8, field.name, "opt_")) {
             if (field.name.len < 4) {
                 std.log.err("Invalid field len '{s}'\n", .{field.name});
             } else {
@@ -223,7 +222,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                     max_option_len = @max(max_option_len, field.name.len - 4);
                 } else {
                     // twice the field name for the argument, plus 1 for space and 2 for brackets
-                    max_option_len = @max(max_arg_len, (field.name.len - 4) * 2 + 3);
+                    max_option_len = @max(max_option_len, (field.name.len - 4) * 2 + 3);
                 }
             }
         } else {
@@ -236,7 +235,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     var optionals = false;
     var command = false;
     inline for (fields) |field| {
-        if (std.mem.startsWith(u8, field.name, "opt_")) {
+        if (comptime std.mem.startsWith(u8, field.name, "opt_")) {
             if (@typeInfo(field.type) == .optional or field.type == bool) {
                 optionals = true;
             } else {
@@ -315,8 +314,8 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
         try writer.print("\nOptions:", .{});
 
         inline for (fields) |field| {
-            if (std.mem.startsWith(u8, field.name, "opt_")) {
-                // try writer.print("\n  --{s}", .{field.name[4..]});
+            if (comptime std.mem.startsWith(u8, field.name, "opt_")) {
+                try writer.print("\n  --{s}", .{field.name[4..]});
 
                 if (field.type != bool) {
                     if (@typeInfo(field.type) == .optional) {
@@ -325,9 +324,9 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
                         try writer.print(" <", .{});
                     }
 
-                    // for (field.name[4..]) |c| {
-                    //     try writer.print("{c}", .{std.ascii.toUpper(c)});
-                    // }
+                    for (field.name[4..]) |c| {
+                        try writer.print("{c}", .{std.ascii.toUpper(c)});
+                    }
 
                     if (@typeInfo(field.type) == .optional) {
                         try writer.print("]", .{});

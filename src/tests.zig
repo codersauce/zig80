@@ -33,6 +33,36 @@ var zx_spectrum_print_hook_address: u16 = 0;
 var zx_spectrum_tab: u8 = 0;
 var cursor_x: usize = 0;
 
+/// High-level CLI options for the `zig80` binary.
+/// These are mapped to `Options` which drive the test runner.
+pub const CliOptions = struct {
+    /// Number of the test to run (1-based). If omitted, runs all tests.
+    @"test": ?u32,
+    /// Compare each test step with the benchmark Z80 C emulator.
+    opt_compare: bool,
+    /// Load a save-state before running tests.
+    opt_load: ?[]const u8,
+
+    /// Human-readable descriptions used by `cli.help_for`.
+    pub const field_info = std.enums.EnumFieldStruct(
+        std.meta.FieldEnum(@This()),
+        ?[]const u8,
+        @as(?[]const u8, null),
+    ){
+        .@"test" = "Test number to run (1-based). If omitted, runs all tests.",
+        .opt_compare = "Compare against the reference Z80 C emulator (Z80.c).",
+        .opt_load = "Path to a saved CPU state to load before running tests.",
+    };
+
+    pub inline fn toOptions(self: CliOptions) Options {
+        return Options{
+            .@"test" = self.@"test",
+            .compare = self.opt_compare,
+            .load = self.opt_load,
+        };
+    }
+};
+
 pub const Options = struct {
     /// Number of the test to run, if omitted runs all tests.
     @"test": ?u32,
@@ -371,12 +401,17 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
     var bench_state_bef: []const u8 = undefined;
     var cpu_state_bef: []const u8 = undefined;
 
+    var bench_pc_bef: u16 = 0;
+    var cpu_pc_bef: u16 = 0;
     if (o.compare) {
         bench_state_bef = try dumpCpuState(alloc, bench_cpu);
         defer alloc.free(bench_state_bef);
 
         cpu_state_bef = try cpu.dumpState();
         defer alloc.free(cpu_state_bef);
+
+        bench_pc_bef = @intCast(bench_cpu.pc.uint16_value);
+        cpu_pc_bef = cpu.pc;
     }
 
     // std.debug.print("before: {s}\n", .{bench_state_bef});
@@ -429,8 +464,18 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
             utils.dumpMemoryWithPointer(&memory, bench_cpu.pc.uint16_value, 20);
             std.debug.print("\n", .{});
 
-            std.debug.print("before: {s}\n", .{bench_state_bef});
-            std.debug.print("before: {s}\n", .{cpu_state_bef});
+            std.debug.print("pc before: bench={X:0>4} cpu={X:0>4}\n", .{ bench_pc_bef, cpu_pc_bef });
+            std.debug.print("pc after : bench={X:0>4} cpu={X:0>4}\n", .{ bench_cpu.pc.uint16_value, cpu.pc });
+            std.debug.print(
+                "cpu regs: a={X:0>2} bc={X:0>4} de={X:0>4} hl={X:0>4} sp={X:0>4}\n",
+                .{ cpu.getA(), cpu.bc, cpu.de, cpu.hl, cpu.sp },
+            );
+            if (cpu.hl > 0 and cpu.de > 0) {
+                std.debug.print(
+                    "mem[hl-1]={X:0>2} mem[de-1]={X:0>2}\n",
+                    .{ cpu.memory[cpu.hl - 1], cpu.memory[cpu.de - 1] },
+                );
+            }
             std.debug.print("\n", .{});
 
             std.debug.print("after : {s}\n", .{bench_state});

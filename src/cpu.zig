@@ -322,7 +322,7 @@ pub const Z80 = struct {
     }
 
     pub fn setHLMemory(self: *Z80, v: u8) void {
-        std.debug.print("setHLMemory: hl={X:0>4}, v={X:0>2}\n", .{ self.hl, v });
+        // std.debug.print("setHLMemory: hl={X:0>4}, v={X:0>2}\n", .{ self.hl, v });
         self.memory[self.hl] = v;
     }
 
@@ -366,15 +366,15 @@ pub const Z80 = struct {
         const v1 = self.getA();
         const result: u16 = @as(u16, v1) + @as(u16, v2);
         const sum = @as(u8, @intCast(result & 0xFF));
-        std.debug.print("add: v1={X:0>2}, v2={X:0>2}, sum={X:0>2} {2b}\n", .{ v1, v2, sum });
-        std.debug.print("sign: {}, zero: {}, halfCarry: {}, parityOverflow: {}, subtract: {}, carry: {}\n", .{
-            result & 0x80 != 0,
-            sum == 0,
-            (v1 & 0x0F) + (v2 & 0x0F) > 0x0F,
-            v1 == 0x7F,
-            false,
-            result > 0xFF,
-        });
+        // std.debug.print("add: v1={X:0>2}, v2={X:0>2}, sum={X:0>2} {2b}\n", .{ v1, v2, sum });
+        // std.debug.print("sign: {}, zero: {}, halfCarry: {}, parityOverflow: {}, subtract: {}, carry: {}\n", .{
+        //     result & 0x80 != 0,
+        //     sum == 0,
+        //     (v1 & 0x0F) + (v2 & 0x0F) > 0x0F,
+        //     v1 == 0x7F,
+        //     false,
+        //     result > 0xFF,
+        // });
 
         var flag = self.getFlag();
         flag.setFromU8(sum);
@@ -610,7 +610,7 @@ pub const Z80 = struct {
     pub fn adc16(self: *Z80, v: u16) void {
         const carry: u16 = if (self.isCarry()) 1 else 0;
         const result: u32 = @as(u32, @intCast(self.hl)) + @as(u32, @intCast(v)) + @as(u32, @intCast(carry));
-        std.debug.print("result={X:0>8}\n", .{result});
+        // std.debug.print("result={X:0>8}\n", .{result});
         self.hl = @as(u16, @intCast(result & 0xFFFF));
 
         var flags = self.getFlag();
@@ -654,6 +654,8 @@ pub const Z80 = struct {
         self.hl = self.hl +% 1;
         self.de = self.de +% 1;
         self.bc = self.bc -% 1;
+        // Original Z80 behavior: F3/F5 come from a variant
+        // of the undocumented XY2 function applied to (A + val).
         self.setXY2(@as(u8, @truncate(@as(u16, val) +% @as(u16, self.getA()))));
         self.setSubtract(false);
         self.setHalfCarry(false);
@@ -741,7 +743,7 @@ pub const Z80 = struct {
     pub fn sbc16(self: *Z80, v: u16) void {
         const carry: u16 = if (self.isCarry()) 1 else 0;
         const result: u32 = @as(u32, @intCast(self.hl)) - @as(u32, @intCast(v)) - @as(u32, @intCast(carry));
-        std.debug.print("result={X:0>8}\n", .{result});
+        // std.debug.print("result={X:0>8}\n", .{result});
 
         var flags = self.getFlag();
         flags.setXY1(@as(u8, @intCast(result >> 8)));
@@ -1298,14 +1300,14 @@ pub const Z80 = struct {
             out(self, port, value);
             return;
         }
-        std.debug.print("OUT {X:0>4}, {X:0>2}\n", .{ port, value });
+        // std.debug.print("OUT {X:0>4}, {X:0>2}\n", .{ port, value });
     }
 
     pub fn readFromPort(self: *Z80, port: u16) u8 {
         if (self.in) |in| {
             return in(self, port);
         }
-        std.debug.print("IN {X:0>4}\n", .{port});
+        // std.debug.print("IN {X:0>4}\n", .{port});
         // Simulate floating bus - return high byte of port
         return @intCast(port >> 8);
     }
@@ -3171,7 +3173,7 @@ pub const Z80 = struct {
         const da: u3 = @as(u3, @intCast((opcode >> 3) & 0b111)); // auxiliary / op0 kind type
         const dr: u8 = opcode & 0b111; // data
 
-        std.debug.print("CB opcode: {X:0>2} dk: {X:0>2} da: {X:0>2} dr: {X:0>2}\n", .{ opcode, dk, da, dr });
+        // std.debug.print("CB opcode: {X:0>2} dk: {X:0>2} da: {X:0>2} dr: {X:0>2}\n", .{ opcode, dk, da, dr });
 
         // auxiliary storage for data under hl
         var hlr: u8 = 0;
@@ -3553,12 +3555,28 @@ pub const Z80 = struct {
                 self.cycles += 16;
             },
             0xB0 => {
+                // LDIR: same memory/register effects as LDI, but with
+                // different flag behavior when BC != 0 (repeat case).
                 self.ldi();
                 if (self.bc != 0) {
+                    // Repeat: XY flags come from the high byte of PC,
+                    // S/Z/C are preserved, H/N are reset, PF is set.
+                    var flags = self.getFlag();
+                    const pc_hi: u8 = @intCast(self.pc >> 8);
+                    flags.setF5(pc_hi & 0x20 == 0x20);
+                    flags.setF3(pc_hi & 0x08 == 0x08);
+                    flags.setParityOverflow(true);
+                    self.setF(flags.get());
+
+                    // PC points past the ED B0 pair here; rewind so the
+                    // next step sees the same instruction again.
                     self.pc -%= 2;
-                    self.wz = self.pc;
+                    // MEMPTR (WZ) for LDIR repeat is PC + 1.
+                    self.wz = self.pc +% 1;
                     self.cycles += 21;
                 } else {
+                    // Final iteration behaves like plain LDI (flags
+                    // already set there), just account for timing.
                     self.cycles += 16;
                 }
             },
@@ -4357,11 +4375,13 @@ pub const Flag = struct {
     }
 
     pub fn setXY2(self: *Flag, v: u8) void {
-        // sets F5 (aka Y) to bit 5 of the result
-        self.setF5(v & 0x20 == 0x20);
-
-        // sets F3 (aka X) to bit 1 of the result
-        self.setF3(v & 0x02 == 0x02);
+        // Undocumented XY2 behavior used by block
+        // instructions like LDI/LDIR and CPI/CPD/CPIR/CPDR.
+        // According to Z80 documentation:
+        //   - Flag 5 comes from bit 1 of the computed value
+        //   - Flag 3 comes from bit 3 of the computed value
+        self.setF5(v & 0x02 == 0x02);
+        self.setF3(v & 0x08 == 0x08);
     }
 
     pub fn setFromU16(self: *Flag, v: u16) void {
