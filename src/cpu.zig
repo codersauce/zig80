@@ -1111,13 +1111,27 @@ pub const Z80 = struct {
     /// Detects if n-th bit of an u8 is set
     fn bit(self: *Z80, n: u3, val: u8) bool {
         const res_val = val & (@as(u8, 1) << n);
-        const res = res_val != 0;
-        self.setZero(res);
-        self.setParityOverflow(res);
+        const bit_is_zero = res_val == 0;
+        self.setZero(bit_is_zero);
+        self.setParityOverflow(bit_is_zero); // P/V is same as Z for BIT
+        self.setSign(n == 7 and !bit_is_zero); // S is set only if testing bit 7 and it's set
         self.setXY1(val);
         self.setHalfCarry(true);
         self.setSubtract(false);
-        return res;
+        return !bit_is_zero; // return true if bit is set
+    }
+
+    // BIT for indexed operations (IX+d, IY+d) - F3/F5 come from high byte of address
+    fn bitIndexed(self: *Z80, n: u3, val: u8, addr: u16) bool {
+        const res_val = val & (@as(u8, 1) << n);
+        const bit_is_zero = res_val == 0;
+        self.setZero(bit_is_zero);
+        self.setParityOverflow(bit_is_zero); // P/V is same as Z for BIT
+        self.setSign(n == 7 and !bit_is_zero); // S is set only if testing bit 7 and it's set
+        self.setXY1(utils.hi(addr)); // F3/F5 from high byte of address for indexed BIT
+        self.setHalfCarry(true);
+        self.setSubtract(false);
+        return !bit_is_zero;
     }
 
     pub fn rst(self: *Z80, address: u16) void {
@@ -1142,13 +1156,15 @@ pub const Z80 = struct {
     }
 
     pub fn push(self: *Z80, v: u16) void {
-        const low = utils.lo(v);
-        self.decSP();
-        self.writeByte(self.sp, low);
-
+        // Z80 pushes high byte first (to SP-1), then low byte (to SP-2)
+        // Stack grows downward, so after push SP points to low byte
         const high = utils.hi(v);
         self.decSP();
         self.writeByte(self.sp, high);
+
+        const low = utils.lo(v);
+        self.decSP();
+        self.writeByte(self.sp, low);
     }
 
     fn jmp(self: *Z80, address: u16) void {
@@ -1168,6 +1184,7 @@ pub const Z80 = struct {
         const res = self.getA() & v;
         self.setZero(res == 0);
         self.setSign(res & 0x80 == 0x80);
+        self.setXY1(res);
         self.setHalfCarry(true);
         self.setParityOverflow(utils.parity(res));
         self.setSubtract(false);
@@ -1180,6 +1197,7 @@ pub const Z80 = struct {
         const res = self.getA() ^ v;
         self.setZero(res == 0);
         self.setSign(res & 0x80 == 0x80);
+        self.setXY1(res);
         self.setHalfCarry(false);
         self.setParityOverflow(utils.parity(res));
         self.setSubtract(false);
@@ -1192,6 +1210,7 @@ pub const Z80 = struct {
         const res = self.getA() | v;
         self.setZero(res == 0);
         self.setSign(res & 0x80 == 0x80);
+        self.setXY1(res);
         self.setHalfCarry(false);
         self.setParityOverflow(utils.parity(res));
         self.setSubtract(false);
@@ -2766,9 +2785,10 @@ pub const Z80 = struct {
                 // }
             },
             0xDE => {
-                // SBC A, n
+                // SBC A, n - 7 cycles total (sbc8 adds 4, we add 3 more)
                 const n = self.fetchByte();
                 self.sbc8(n);
+                self.cycles += 3;
             },
             0xDF => {
                 // RST 18H
@@ -3244,7 +3264,7 @@ pub const Z80 = struct {
             },
             1 => {
                 // BIT - test bit, don't store result
-                _ = self.bit(da, value);
+                _ = self.bitIndexed(da, value, addr);
                 self.cycles += 20;
                 return; // No register store for BIT
             },
@@ -3510,10 +3530,11 @@ pub const Z80 = struct {
                 self.cycles += 20;
             },
 
-            // neg
-            0x44 | 0x54 | 0x64 | 0x74 | 0x4C | 0x5C | 0x6C | 0x7C => {
+            // neg - 8 cycles
+            0x44, 0x54, 0x64, 0x74, 0x4C, 0x5C, 0x6C, 0x7C => {
                 // NEG
                 self.setA(self.sub8(0, self.getA(), false));
+                self.cycles += 8;
             },
 
             // ldi/ldir
@@ -3641,18 +3662,18 @@ pub const Z80 = struct {
                 }
             },
 
-            // im 0/1/2
-            0x46 | 0x66 => {
+            // im 0/1/2 (including undocumented variants)
+            0x46, 0x4E, 0x66, 0x6E => {
                 // IM 0
                 self.im = 0;
                 self.cycles += 8;
             },
-            0x56 | 0x76 => {
+            0x56, 0x76 => {
                 // IM 1
                 self.im = 1;
                 self.cycles += 8;
             },
-            0x5E | 0x7E => {
+            0x5E, 0x7E => {
                 // IM 2
                 self.im = 2;
                 self.cycles += 8;
@@ -3688,6 +3709,31 @@ pub const Z80 = struct {
                 self.cycles += 18;
             },
 
+            // RETN - Return from NMI (copies IFF2 to IFF1)
+            0x45, 0x55, 0x65, 0x75, 0x5D, 0x6D, 0x7D => {
+                self.iff1 = self.iff2;
+                self.pc = self.pop();
+                self.cycles += 14;
+            },
+
+            // RETI - Return from interrupt
+            0x4D => {
+                self.pc = self.pop();
+                self.cycles += 14;
+            },
+
+            // LD I,A
+            0x47 => {
+                self.i = self.getA();
+                self.cycles += 9;
+            },
+
+            // LD R,A
+            0x4F => {
+                self.r = self.getA();
+                self.cycles += 9;
+            },
+
             else => |_| {
                 // self.saveState("/tmp/cpu.json");
                 // std.debug.panic("Unknown ED extended opcode: {0X:0>2}\n", .{code});
@@ -3707,6 +3753,14 @@ pub const Z80 = struct {
                 ir.* = self.pop();
                 self.cycles += 14;
             },
+            0xE3 => {
+                // EX (SP), IX - Exchange IX with value at (SP)
+                const ix = ir.*;
+                ir.* = utils.u16FromBytes(self.memory[self.sp], self.memory[self.sp + 1]);
+                self.writeByte(self.sp, utils.lo(ix));
+                self.writeByte(self.sp + 1, utils.hi(ix));
+                self.cycles += 23;
+            },
             0xE5 => {
                 // PUSH IX
                 self.push(ir.*);
@@ -3718,6 +3772,13 @@ pub const Z80 = struct {
                 // JP (IX)
                 self.jmp(ir.*);
                 self.cycles += 8;
+            },
+
+            // Load.
+            0xF9 => {
+                // LD SP, IX
+                self.setSP(ir.*);
+                self.cycles += 10;
             },
 
             // Arithmetics.
@@ -3823,28 +3884,9 @@ pub const Z80 = struct {
                 self.cycles += 4;
             },
             0xA6 => {
-                // #define op3(opA, opB, opC, f) H(opA, f(r8(IDP))) H(opB, f(IHI)) H(opC, f(ILO))
-                // op3(0xA6, 0xA4, 0xA5, land)
-                // op3(0xAE, 0xAC, 0xAD, lxor)
-                // op3(0xB6, 0xB4, 0xB5, lor)
-                // op3(0xBE, 0xBC, 0xBD, cmpa)
-                // #undef op3
-                //
-                // static inline u8 p8() {return({m[pc++];});}
-                //
-                //   case 0xA6: land(m[dp(*ir, p8())]); break; case 0xA4: land(((*ir) >> 8)); break; case 0xA5: land(((*ir) & 0xFF)); break;
-                //   case 0xAE: lxor(m[dp(*ir, p8())]); break; case 0xAC: lxor(((*ir) >> 8)); break; case 0xAD: lxor(((*ir) & 0xFF)); break;
-                //   case 0xB6: lor(m[dp(*ir, p8())]); break; case 0xB4: lor(((*ir) >> 8)); break; case 0xB5: lor(((*ir) & 0xFF)); break;
-                //   case 0xBE: cmpa(m[dp(*ir, p8())]); break; case 0xBC: cmpa(((*ir) >> 8)); break; case 0xBD: cmpa(((*ir) & 0xFF)); break;
-                //
-                // H = #define H(n, c...) case n: c; break;
-                // f = function to call (land, lxor, lor or cmpa)
-                // r8 = read 8-bit value from memory
-                // #define _(a...) {return({a;});}
-                // IDP = Displacement computation. Updates the WZ pair.
-                //       SI u16 dp(u16 b, i8 d) _ (wz = b + d)
+                // AND A, (IX+d) - total 19 cycles (4 for DD prefix + 15 here)
                 self.land(self.memory[self.indexedAddr(ir.*)]);
-                self.cycles += 4;
+                self.cycles += 15;
             },
             0xA4 => {
                 // AND A, IYH
@@ -3857,9 +3899,9 @@ pub const Z80 = struct {
                 self.cycles += 4;
             },
             0xAE => {
-                // XOR A, (IX+d)
+                // XOR A, (IX+d) - total 19 cycles (4 for DD prefix + 15 here)
                 self.lxor(self.memory[self.indexedAddr(ir.*)]);
-                self.cycles += 4;
+                self.cycles += 15;
             },
             0xAC => {
                 // XOR A, IYH
@@ -3872,9 +3914,9 @@ pub const Z80 = struct {
                 self.cycles += 4;
             },
             0xB6 => {
-                // OR A, (IX+d)
+                // OR A, (IX+d) - total 19 cycles (4 for DD prefix + 15 here)
                 self.lor(self.memory[self.indexedAddr(ir.*)]);
-                self.cycles += 4;
+                self.cycles += 15;
             },
             0xB4 => {
                 // OR A, IYH
@@ -3887,11 +3929,10 @@ pub const Z80 = struct {
                 self.cycles += 4;
             },
             0xBE => {
-                // CP A, (IX+d)
+                // CP A, (IX+d) - total 19 cycles (4 for DD prefix + 15 here)
                 // Subtracts the value pointed to by IX plus d from A and affects flags according to the result. A is not modified.
-                const d = self.fetchByte();
-                self.cmpa(self.memory[d + ir.*]);
-                self.cycles += 4;
+                self.cmpa(self.memory[self.indexedAddr(ir.*)]);
+                self.cycles += 15;
             },
             0xBC => {
                 // CP A, IYH
