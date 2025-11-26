@@ -359,12 +359,12 @@ pub const ZInt128 = extern union {
     sint8_array: [16]zsint8 align(1),
     sint8_values: struct_unnamed_30 align(1),
 };
-pub const Z80Read = ?*const fn (?*anyopaque, zuint16) callconv(.C) zuint8;
-pub const Z80Write = ?*const fn (?*anyopaque, zuint16, zuint8) callconv(.C) void;
-pub const Z80Halt = ?*const fn (?*anyopaque, zuint8) callconv(.C) void;
-pub const Z80Notify = ?*const fn (?*anyopaque) callconv(.C) void;
+pub const Z80Read = ?*const fn (?*anyopaque, zuint16) callconv(.c) zuint8;
+pub const Z80Write = ?*const fn (?*anyopaque, zuint16, zuint8) callconv(.c) void;
+pub const Z80Halt = ?*const fn (?*anyopaque, zuint8) callconv(.c) void;
+pub const Z80Notify = ?*const fn (?*anyopaque) callconv(.c) void;
 pub const Z80 = struct_Z80;
-pub const Z80Illegal = ?*const fn ([*c]Z80, zuint8) callconv(.C) zuint8;
+pub const Z80Illegal = ?*const fn ([*c]Z80, zuint8) callconv(.c) zuint8;
 pub const struct_Z80 = extern struct {
     cycles: zusize = @import("std").mem.zeroes(zusize),
     cycle_limit: zusize = @import("std").mem.zeroes(zusize),
