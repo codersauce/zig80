@@ -32,6 +32,7 @@ var a: u8 = 0xFF;
 var zx_spectrum_print_hook_address: u16 = 0;
 var zx_spectrum_tab: u8 = 0;
 var cursor_x: usize = 0;
+var compare_mode: bool = false;
 
 /// High-level CLI options for the `zig80` binary.
 /// These are mapped to `Options` which drive the test runner.
@@ -40,6 +41,8 @@ pub const CliOptions = struct {
     @"test": ?u32,
     /// Compare each test step with the benchmark Z80 C emulator.
     opt_compare: bool,
+    /// Use faster, chunked compare mode (less precise first-mismatch location).
+    opt_fast_compare: bool = false,
     /// Load a save-state before running tests.
     opt_load: ?[]const u8,
 
@@ -51,6 +54,7 @@ pub const CliOptions = struct {
     ){
         .@"test" = "Test number to run (1-based). If omitted, runs all tests.",
         .opt_compare = "Compare against the reference Z80 C emulator (Z80.c).",
+        .opt_fast_compare = "Use faster, chunked compare mode (less precise mismatch location).",
         .opt_load = "Path to a saved CPU state to load before running tests.",
     };
 
@@ -58,6 +62,7 @@ pub const CliOptions = struct {
         return Options{
             .@"test" = self.@"test",
             .compare = self.opt_compare,
+            .fast_compare = self.opt_fast_compare,
             .load = self.opt_load,
         };
     }
@@ -68,6 +73,8 @@ pub const Options = struct {
     @"test": ?u32,
     /// Compares each step with the benchmark emulator (Z80.c).
     compare: bool,
+    /// Use faster, chunked compare mode when comparing.
+    fast_compare: bool = false,
     /// Loads a save state before running the test.
     load: ?[]const u8,
 
@@ -75,6 +82,7 @@ pub const Options = struct {
         return Options{
             .@"test" = null,
             .compare = false,
+            .fast_compare = false,
             .load = null,
         };
     }
@@ -82,12 +90,14 @@ pub const Options = struct {
     pub fn toTestOptions(self: Options) TestOptions {
         return TestOptions{
             .compare = self.compare,
+            .fast_compare = self.fast_compare,
         };
     }
 };
 
 pub const TestOptions = struct {
     compare: bool,
+    fast_compare: bool = false,
 };
 
 pub fn run(alloc: Allocator, options: Options) !void {
@@ -117,6 +127,8 @@ pub fn run(alloc: Allocator, options: Options) !void {
 
 pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test, options: TestOptions, reset: bool) !void {
     var bench_cpu = c.Z80{};
+
+    compare_mode = options.compare;
 
     if (options.compare) {
         bench_cpu.context = null;
@@ -151,8 +163,12 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test, options: TestOptions, reset
         std.debug.print("starting with pc = {X:0>4}\n", .{cpu.pc});
     }
 
-    while (!cpu.isHalted()) {
-        try step(alloc, cpu, &bench_cpu, options);
+    if (options.compare and options.fast_compare) {
+        try runFastCompare(alloc, cpu, &bench_cpu, t);
+    } else {
+        while (!cpu.isHalted()) {
+            try step(alloc, cpu, &bench_cpu, options);
+        }
     }
 }
 
@@ -231,13 +247,13 @@ fn cpmHook(address: u16, cv: u8, de: u16) u8 {
         const char: u8 = @intCast(de & 0xFF);
         switch (char) {
             0x0A => {
-                // std.debug.print("\n", .{});
+                if (!compare_mode) std.debug.print("\n", .{});
             },
             0x0D => {
                 // do nothing?
             },
             else => {
-                // std.debug.print("{c}", .{char});
+                if (!compare_mode) std.debug.print("{c}", .{char});
             },
         }
     } else if (cv == 9) {
@@ -253,11 +269,11 @@ fn cpmHook(address: u16, cv: u8, de: u16) u8 {
             if (char == 0x24) {
                 return 0xC9;
             } else if (char == 0x0A) {
-                // std.debug.print("\n", .{});
+                if (!compare_mode) std.debug.print("\n", .{});
             } else if (char == 0x0D) {
                 continue;
             } else {
-                // std.debug.print("{c}", .{char});
+                if (!compare_mode) std.debug.print("{c}", .{char});
             }
         }
     }
@@ -475,6 +491,49 @@ fn step(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, o: TestOptions) !void {
         }
 
         // std.debug.print("\n", .{});
+    }
+}
+
+fn runFastCompare(alloc: Allocator, cpu: *Z80, bench_cpu: *c.Z80, t: Test) !void {
+    // Chunked compare: run both CPUs for a number of cycles, then compare state.
+    // This is much faster than per-instruction compare, but the first mismatching
+    // instruction will only be known within a chunk window.
+    const chunk_cycles: u64 = 10_000;
+
+    while (!cpu.isHalted()) {
+        // Decide how many cycles to run in this chunk.
+        const remaining: u64 = if (t.cycles > cpu.cycles) t.cycles - cpu.cycles else chunk_cycles;
+        const this_chunk: u64 = if (remaining < chunk_cycles) remaining else chunk_cycles;
+
+        if (this_chunk == 0) break;
+
+        const before_cycles = cpu.cycles;
+
+        // Run our CPU for this_chunk cycles (or until HALT).
+        cpu.run(this_chunk);
+
+        // Run reference CPU for the same number of cycles.
+        const ref_chunk: usize = @intCast(this_chunk);
+        _ = c.z80_run(bench_cpu, ref_chunk);
+
+        // Compare state after the chunk.
+        if (!try compare(alloc, cpu, bench_cpu)) {
+            const bench_state = try dumpCpuState(alloc, bench_cpu);
+            defer alloc.free(bench_state);
+
+            const cpu_state = try cpu.dumpState();
+            defer cpu.alloc.free(cpu_state);
+
+            std.debug.print("fast compare mismatch after ~{d} cycles (chunk={d})\n", .{ cpu.cycles, this_chunk });
+            std.debug.print("after : {s}\n", .{bench_state});
+            std.debug.print("after : {s}\n", .{cpu_state});
+            return error.Benchmar8kCpuMismatch;
+        }
+
+        // Stop if we halted or did not consume the full chunk (early halt).
+        if (cpu.isHalted() or cpu.cycles - before_cycles < this_chunk) break;
+
+        if (cpu.cycles >= t.cycles and t.cycles != 0) break;
     }
 }
 

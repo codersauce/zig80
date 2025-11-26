@@ -33,6 +33,9 @@ pub const Z80 = struct {
     iff2: bool, // Interrupt flip-flop 2
     im: u8, // Interrupt mode
 
+    // Q latch used for undocumented flag behavior (SCF/CCF).
+    q: u8 = 0,
+
     // "WZ" register.
     // https://www.grimware.org/lib/exe/fetch.php/documentations/devices/z80/z80.memptr.eng.txt
     wz: u16,
@@ -121,6 +124,7 @@ pub const Z80 = struct {
         self.i = 0;
         self.r = 0;
         self.im = 0;
+        self.q = 0;
         self.iff1 = false;
         self.iff2 = false;
         self.cycles = 0;
@@ -1433,8 +1437,17 @@ pub const Z80 = struct {
 
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
+        // Snapshot flags before executing an instruction to approximate Q latch
+        // semantics: instructions that change F copy new F to Q, others clear Q.
+        const old_f: u8 = self.getF();
         // std.debug.print("opcode = 0x{X:0>2}\n", .{self.peekByte()});
         self.executeOpcode(self.fetchOpcode());
+        const new_f: u8 = self.getF();
+        if (new_f != old_f) {
+            self.q = new_f;
+        } else {
+            self.q = 0;
+        }
     }
 
     pub fn executeOpcode(self: *Z80, opcode: u8) void {
@@ -1786,15 +1799,20 @@ pub const Z80 = struct {
             },
             0x2F => {
                 // CPL
-                self.setA(~self.getA());
+                const a_before = self.getA();
+                const new_a = ~a_before;
+                self.setA(new_a);
 
-                //                       SZ5H3VNC
-                // CPL                   --*1*-1- F5, F3 from A register
-                var flags = self.getFlag();
-                flags.setHalfCarry(true);
-                flags.setSubtract(true);
-                flags.setXY1(self.getA());
-                self.setF(flags.get());
+                // Match Z80 reference: SF/ZF/PF unchanged; XY from new A; H=N=1.
+                const old_f: u8 = self.getF();
+                var new_f: u8 = old_f & 0b11000101; // keep S,Z,PF,CF
+                // XY from A
+                if (new_a & 0x20 != 0) new_f |= 0x20;
+                if (new_a & 0x08 != 0) new_f |= 0x08;
+                // HF,NF = 1
+                new_f |= 0x10; // H
+                new_f |= 0x02; // N
+                self.setF(new_f);
 
                 self.cycles += 4;
             },
@@ -1841,13 +1859,26 @@ pub const Z80 = struct {
             },
             0x37 => {
                 // SCF
-                var flag = self.getFlag();
-                // SF, ZF, PF unchanged; XY from A; CF=1; H,N=0
-                flag.setXY1(self.getA());
-                flag.setCarry(true);
-                flag.setSubtract(false);
-                flag.setHalfCarry(false);
-                self.setF(flag.get());
+                const old_f: u8 = self.getF();
+                const a: u8 = self.getA();
+                const q: u8 = self.q;
+
+                // Keep S,Z,P from old_f; set CF=1; H,N=0.
+                var new_f: u8 = old_f & 0b11000100; // S,Z,P
+                new_f |= 0x01; // C
+
+                // YF = A.5 | (YFi ^ YQi); XF = A.3 | (XFi ^ XQi)
+                const y_old = (old_f & 0x20) != 0;
+                const y_q = (q & 0x20) != 0;
+                const y_a = (a & 0x20) != 0;
+                if (y_a or (y_old != y_q)) new_f |= 0x20;
+
+                const x_old = (old_f & 0x08) != 0;
+                const x_q = (q & 0x08) != 0;
+                const x_a = (a & 0x08) != 0;
+                if (x_a or (x_old != x_q)) new_f |= 0x08;
+
+                self.setF(new_f);
                 self.cycles += 4;
             },
             0x38 => {
@@ -1894,14 +1925,31 @@ pub const Z80 = struct {
             },
             0x3F => {
                 // CCF
-                var flag = self.getFlag();
-                const old_c = flag.isCarry();
-                // SF, ZF, PF unchanged; CF toggled; H gets old C; N=0; XY from A
-                flag.setXY1(self.getA());
-                flag.setCarry(!old_c);
-                flag.setHalfCarry(old_c);
-                flag.setSubtract(false);
-                self.setF(flag.get());
+                const old_f: u8 = self.getF();
+                const a: u8 = self.getA();
+                const q: u8 = self.q;
+
+                const old_c = (old_f & 0x01) != 0;
+
+                // SF,ZF,PF unchanged; CF toggled.
+                var new_f: u8 = old_f & 0b11000100; // S,Z,P
+                if (!old_c) new_f |= 0x01;
+
+                // HF = old CF; N = 0.
+                if (old_c) new_f |= 0x10;
+
+                // YF = A.5 | (YFi ^ YQi); XF = A.3 | (XFi ^ XQi)
+                const y_old = (old_f & 0x20) != 0;
+                const y_q = (q & 0x20) != 0;
+                const y_a = (a & 0x20) != 0;
+                if (y_a or (y_old != y_q)) new_f |= 0x20;
+
+                const x_old = (old_f & 0x08) != 0;
+                const x_q = (q & 0x08) != 0;
+                const x_a = (a & 0x08) != 0;
+                if (x_a or (x_old != x_q)) new_f |= 0x08;
+
+                self.setF(new_f);
                 self.cycles += 4;
             },
             0x40 => {
