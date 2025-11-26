@@ -2886,6 +2886,10 @@ pub const Z80 = struct {
                 // XOR n
                 self.xorOp(self.fetchByte());
             },
+            0xEF => {
+                // RST 28H
+                self.rst(0x28);
+            },
             0xF0 => {
                 // RET P
                 if (!self.isSign()) {
@@ -2905,6 +2909,14 @@ pub const Z80 = struct {
                 self.incSP();
                 self.setA(self.memory[self.sp]);
                 self.incSP();
+                self.cycles += 10;
+            },
+            0xF2 => {
+                // JP P, nn - Jump if Positive (sign flag not set)
+                const addr = self.fetchWord();
+                if (!self.isSign()) {
+                    self.pc = addr;
+                }
                 self.cycles += 10;
             },
             0xF3 => {
@@ -2941,6 +2953,10 @@ pub const Z80 = struct {
                 // OR n
                 self.orOp(self.fetchByte());
             },
+            0xF7 => {
+                // RST 30H
+                self.rst(0x30);
+            },
             0xF8 => {
                 // RET M
                 if (self.isSign()) {
@@ -2958,6 +2974,14 @@ pub const Z80 = struct {
                 // LD SP, HL
                 self.setSP(self.hl);
                 self.cycles += 6;
+            },
+            0xFA => {
+                // JP M, nn - Jump if Minus (sign flag set)
+                const addr = self.fetchWord();
+                if (self.isSign()) {
+                    self.pc = addr;
+                }
+                self.cycles += 10;
             },
             0xFB => {
                 // EI
@@ -3073,10 +3097,6 @@ pub const Z80 = struct {
             0xFF => {
                 // RST 38H
                 self.rst(0x38);
-            },
-            else => |code| {
-                self.saveState("/tmp/cpu.json");
-                std.debug.panic("Unknown opcode: {0X:0>2}", .{code});
             },
         }
     }
