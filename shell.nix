@@ -9,7 +9,7 @@ in
 pkgs.mkShell {
   nativeBuildInputs = with pkgs; [
     unstable.zls
-    zig_0_13
+    zig_0_15
     zlib
     libcxx
     cmake

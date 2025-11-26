@@ -226,7 +226,8 @@ fn executeTest(cpu: *Z80, t: TestCase, result: TestResult) void {
         cpu.execute();
         // std.debug.print("Cycles: {d}\n", .{cpu.cycles});
         if (current_cycles == cpu.cycles) {
-            std.debug.panic("No cycles\n", .{});
+            const opcode = cpu.peekByte();
+            std.debug.panic("Test '{s}' failed: No cycles consumed (opcode 0x{X:0>2} at PC 0x{X:0>4})\n", .{t.name, opcode, cpu.pc});
             break;
         }
         current_cycles = cpu.cycles;

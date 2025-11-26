@@ -54,10 +54,10 @@ pub const Z80 = struct {
     hook: ?*const fn (*Z80, address: u16) u8,
 
     // Write to port (OUT)
-    out: ?*const fn (*Z80, port: u8, value: u8) void,
+    out: ?*const fn (*Z80, port: u16, value: u8) void,
 
     // Read from port (IN)
-    in: ?*const fn (*Z80, port: u8) u8,
+    in: ?*const fn (*Z80, port: u16) u8,
 
     // Initialize the CPU state
     pub fn init(alloc: Allocator) Z80 {
@@ -654,7 +654,7 @@ pub const Z80 = struct {
         self.hl = self.hl +% 1;
         self.de = self.de +% 1;
         self.bc = self.bc -% 1;
-        self.setXY2(val + self.getA());
+        self.setXY2(@as(u8, @truncate(@as(u16, val) +% @as(u16, self.getA()))));
         self.setSubtract(false);
         self.setHalfCarry(false);
         self.setParityOverflow(self.bc > 0);
@@ -704,8 +704,8 @@ pub const Z80 = struct {
     }
 
     fn ini(self: *Z80) void {
-        // m[get_hl()] = port_in(c); adji();
-        self.setHLMemory(self.readFromPort(self.getC()));
+        // m[get_hl()] = port_in(BC); adji();
+        self.setHLMemory(self.readFromPort(self.bc));
         self.adji();
     }
 
@@ -717,8 +717,8 @@ pub const Z80 = struct {
     }
 
     fn outi(self: *Z80) void {
-        // port_out(c, m[get_hl()]); adji();
-        self.writeToPort(self.getC(), self.getHLMemory());
+        // port_out(BC, m[get_hl()]); adji();
+        self.writeToPort(self.bc, self.getHLMemory());
         self.adji();
     }
 
@@ -1293,20 +1293,21 @@ pub const Z80 = struct {
         return utils.u16FromBytes(low, high);
     }
 
-    pub fn writeToPort(self: *Z80, port: u8, value: u8) void {
+    pub fn writeToPort(self: *Z80, port: u16, value: u8) void {
         if (self.out) |out| {
             out(self, port, value);
             return;
         }
-        std.debug.print("OUT {X:0>2}, {X:0>2}\n", .{ port, value });
+        std.debug.print("OUT {X:0>4}, {X:0>2}\n", .{ port, value });
     }
 
-    pub fn readFromPort(self: *Z80, port: u8) u8 {
+    pub fn readFromPort(self: *Z80, port: u16) u8 {
         if (self.in) |in| {
             return in(self, port);
         }
-        std.debug.print("IN {X:0>2}\n", .{port});
-        return 0;
+        std.debug.print("IN {X:0>4}\n", .{port});
+        // Simulate floating bus - return high byte of port
+        return @intCast(port >> 8);
     }
 
     pub fn start(self: *Z80) void {
@@ -1418,9 +1419,13 @@ pub const Z80 = struct {
     }
 
     fn setInFlags(self: *Z80, v: u8) void {
+        self.setSign(v & 0x80 != 0);
         self.setZero(v == 0);
-        self.setSubtract(v & 0x80 != 0);
+        self.setXY1(v);
+        self.setHalfCarry(false);
         self.setParityOverflow(utils.parity(v));
+        self.setSubtract(false);
+        // Carry flag is preserved (not modified by IN instructions)
     }
 
     // Execute a single instruction
@@ -2679,9 +2684,11 @@ pub const Z80 = struct {
                 self.cycles += 10;
             },
             0xD3 => {
-                // OUT (n), A
-                const port = self.fetchByte();
+                // OUT (n), A - port is formed from A (high) and n (low)
+                const n = self.fetchByte();
+                const port: u16 = (@as(u16, self.getA()) << 8) | n;
                 self.writeToPort(port, self.getA());
+                self.wz = (@as(u16, self.getA()) << 8) | ((n +% 1) & 0xFF);
                 self.cycles += 11;
             },
             0xD4 => {
@@ -2747,9 +2754,11 @@ pub const Z80 = struct {
                 self.cycles += 10;
             },
             0xDB => {
-                // IN A, (n)
-                const port = self.fetchByte();
+                // IN A, (n) - port is formed from A (high) and n (low)
+                const n = self.fetchByte();
+                const port: u16 = (@as(u16, self.getA()) << 8) | n;
                 self.setA(self.readFromPort(port));
+                self.wz = port +% 1;
                 self.cycles += 11;
             },
             0xDC => {
@@ -3342,95 +3351,95 @@ pub const Z80 = struct {
             //     self.tst(n);
             // },
 
-            // in r, (C)
+            // in r, (C) - uses full 16-bit BC register as port
             0x40 => {
                 // IN B, (C)
-                self.setB(self.readFromPort(self.getC()));
+                self.setB(self.readFromPort(self.bc));
                 self.setInFlags(self.getB());
                 self.cycles += 12;
             },
             0x50 => {
                 // IN D, (C)
-                self.setD(self.readFromPort(self.getC()));
+                self.setD(self.readFromPort(self.bc));
                 self.setInFlags(self.getD());
                 self.cycles += 12;
             },
             0x60 => {
                 // IN H, (C)
-                self.setH(self.readFromPort(self.getC()));
+                self.setH(self.readFromPort(self.bc));
                 self.setInFlags(self.getH());
                 self.cycles += 12;
             },
             0x70 => {
                 // IN (HL), (C)
-                self.memory[self.hl] = self.readFromPort(self.getC());
+                self.memory[self.hl] = self.readFromPort(self.bc);
                 self.setInFlags(self.memory[self.hl]);
                 self.cycles += 12;
             },
             0x48 => {
                 // IN C, (C)
-                self.setC(self.readFromPort(self.getC()));
+                self.setC(self.readFromPort(self.bc));
                 self.setInFlags(self.getC());
                 self.cycles += 12;
             },
             0x58 => {
                 // IN E, (C)
-                self.setE(self.readFromPort(self.getC()));
+                self.setE(self.readFromPort(self.bc));
                 self.setInFlags(self.getE());
                 self.cycles += 12;
             },
             0x68 => {
                 // IN L, (C)
-                self.setL(self.readFromPort(self.getC()));
+                self.setL(self.readFromPort(self.bc));
                 self.setInFlags(self.getL());
                 self.cycles += 12;
             },
             0x78 => {
                 // IN A, (C)
-                self.setA(self.readFromPort(self.getC()));
+                self.setA(self.readFromPort(self.bc));
                 self.setInFlags(self.getA());
                 self.cycles += 12;
             },
 
-            // out (C), r
+            // out (C), r - uses full 16-bit BC register as port
             0x41 => {
                 // OUT (C), B
-                self.writeToPort(self.getC(), self.getB());
+                self.writeToPort(self.bc, self.getB());
                 self.cycles += 12;
             },
             0x51 => {
                 // OUT (C), D
-                self.writeToPort(self.getC(), self.getD());
+                self.writeToPort(self.bc, self.getD());
                 self.cycles += 12;
             },
             0x61 => {
                 // OUT (C), H
-                self.writeToPort(self.getC(), self.getH());
+                self.writeToPort(self.bc, self.getH());
                 self.cycles += 12;
             },
             0x71 => {
                 // OUT (C), (HL)
-                self.writeToPort(self.getC(), self.memory[self.hl]);
+                self.writeToPort(self.bc, self.memory[self.hl]);
                 self.cycles += 12;
             },
             0x49 => {
                 // OUT (C), C
-                self.writeToPort(self.getC(), self.getC());
+                self.writeToPort(self.bc, self.getC());
                 self.cycles += 12;
             },
             0x59 => {
                 // OUT (C), E
-                self.writeToPort(self.getC(), self.getE());
+                self.writeToPort(self.bc, self.getE());
                 self.cycles += 12;
             },
             0x69 => {
                 // OUT (C), L
-                self.writeToPort(self.getC(), self.getL());
+                self.writeToPort(self.bc, self.getL());
                 self.cycles += 12;
             },
             0x79 => {
                 // OUT (C), A
-                self.writeToPort(self.getC(), self.getA());
+                self.writeToPort(self.bc, self.getA());
                 self.wz = self.bc +% 1;
                 self.cycles += 12;
             },
@@ -3482,8 +3491,9 @@ pub const Z80 = struct {
             0x53 => {
                 // LD (nn), DE
                 const nn = self.fetchWord();
-                self.writeWord(self.fetchWord(), self.de);
+                self.writeWord(nn, self.de);
                 self.wz = nn +% 1;
+                self.cycles += 20;
             },
             0x63 => {
                 // LD (nn), HL

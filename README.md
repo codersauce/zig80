@@ -138,6 +138,18 @@ zig test src/cli.zig
 
 The remaining 3 failures are port I/O tests (`IN r,(C)` instructions) that require test infrastructure updates to pass port data from `busActivity`.
 
+### Recently Completed
+
+- [x] **Port I/O Improvements** - Fixed all port-related instructions to use proper 16-bit addressing
+  - IN r,(C) and OUT (C),r instructions now use full BC register (16-bit port)
+  - IN A,(n) and OUT (n),A instructions properly form port from A (high) and n (low)
+  - Port callbacks updated to u16 with floating bus simulation
+  - Fixed setInFlags() to properly set Sign, HalfCarry, and XY flags
+- [x] **Instruction Fixes**
+  - Fixed ED 53 (LD (nn), DE) - missing cycle count and double fetchWord bug
+  - Fixed LDI/LDD integer overflow in flag calculation
+- [x] **Test Coverage** - All basic port I/O tests now pass with `--both` flag
+
 ### In Progress
 
 - [ ] Update test infrastructure to support port I/O from busActivity data
