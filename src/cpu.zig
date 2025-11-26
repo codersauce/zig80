@@ -2180,7 +2180,7 @@ pub const Z80 = struct {
             },
             0x76 => {
                 // HALT
-                std.debug.print("HALT\n", .{});
+                std.debug.print("\nHALT\n", .{});
                 self.cycles += 4;
                 self.halt = true;
                 return;
@@ -2330,19 +2330,19 @@ pub const Z80 = struct {
             },
             0x98 => {
                 // SBC A, B
-                self.sbc(self.getA(), self.getB());
+                self.sbc8(self.getB());
             },
             0x99 => {
                 // SBC A, C
-                self.sbc(self.getA(), self.getC());
+                self.sbc8(self.getC());
             },
             0x9A => {
                 // SBC A, D
-                self.sbc(self.getA(), self.getD());
+                self.sbc8(self.getD());
             },
             0x9B => {
                 // SBC A, E
-                self.sbc(self.getA(), self.getE());
+                self.sbc8(self.getE());
             },
             0x9C => {
                 // SBC A, H
