@@ -134,12 +134,21 @@ zig test src/cli.zig
 
 ## Current Status
 
+**Test Coverage:** 99.6% (3 of ~750 tests failing)
+
+The remaining 3 failures are port I/O tests (`IN r,(C)` instructions) that require test infrastructure updates to pass port data from `busActivity`.
+
 ### In Progress
 
+- [ ] Update test infrastructure to support port I/O from busActivity data
 - [ ] Get full coverage from all test suites
 
 ### Completed
 
+- [x] Core Z80 instruction set implementation
+- [x] IX/IY indexed addressing modes with proper cycle timing
+- [x] DD CB / FD CB indexed bit operations
+- [x] ED prefix instructions (NEG, RETN, RETI, IM 0/1/2, LD I/R,A)
 - [x] Run integration tests validating against [redcode/Z80](https://github.com/redcode/Z80)
 - [x] Port test suite execution from [redcode/Z80](https://github.com/redcode/Z80) and [redcode/SingleStepTests-z80](https://github.com/redcode/SingleStepTests-z80)
 - [x] Set up initial project structure
