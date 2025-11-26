@@ -126,29 +126,29 @@ pub fn runTest(alloc: Allocator, cpu: *Z80, t: Test, options: TestOptions, reset
     }
 }
 
-fn cpuIn(context: ?*anyopaque, port: u16) callconv(.C) u8 {
+fn cpuIn(context: ?*anyopaque, port: u16) callconv(.c) u8 {
     _ = context;
     std.debug.print("in: {x}\n", .{port});
     return 0;
 }
 
-fn cpuOut(context: ?*anyopaque, port: u16, value: u8) callconv(.C) void {
+fn cpuOut(context: ?*anyopaque, port: u16, value: u8) callconv(.c) void {
     _ = context;
     std.debug.print("out: {x} {x}\n", .{ port, value });
 }
 
-fn cpuHalt(context: ?*anyopaque, state: u8) callconv(.C) void {
+fn cpuHalt(context: ?*anyopaque, state: u8) callconv(.c) void {
     _ = context;
     std.debug.print("halt: {x}\n", .{state});
 }
 
-fn cpuRead(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+fn cpuRead(context: ?*anyopaque, address: c_ushort) callconv(.c) u8 {
     _ = context;
     const opcode = memory[address];
     return opcode;
 }
 
-fn cpmTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+fn cpmTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.c) void {
     _ = context;
     // std.debug.print("[theirs] write: {X:0>4} {X:0>2}\n", .{ address, value });
     memory[address] = value;
@@ -159,7 +159,7 @@ fn cpmCpuWrite(cpu: *Z80, address: u16, value: u8) void {
     cpu.memory[address] = value;
 }
 
-fn cpmTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+fn cpmTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.c) u8 {
     const cpu: *c.Z80 = @ptrCast(@alignCast(context.?));
     const cv: u8 = @intCast(cpu.bc.uint16_value & 0xFF);
     const de: u16 = cpu.de.uint16_value;
@@ -241,7 +241,7 @@ fn spectrumCpuWrite(self: *Z80, address: u16, value: u8) void {
     }
 }
 
-fn spectrumTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.C) void {
+fn spectrumTheirWrite(context: ?*anyopaque, address: c_ushort, value: u8) callconv(.c) void {
     _ = context;
     if (address > 0x3FFF) {
         memory[address] = value;
@@ -253,7 +253,7 @@ fn spectrumCpuHook(cpu: *Z80, address: u16) u8 {
     return spectrumHook(address, cpu.getA());
 }
 
-fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.C) u8 {
+fn spectrumTheirHook(context: ?*anyopaque, address: c_ushort) callconv(.c) u8 {
     if (context == null) {
         std.debug.print("context is null\n", .{});
         return 0x00;
@@ -669,12 +669,12 @@ pub fn downloadAndExtract(alloc: Allocator) !void {
 
     std.fs.cwd().makeDir("depot") catch {};
 
-    var it = std.mem.split(u8, contents, "\n");
+    var it = std.mem.splitScalar(u8, contents, '\n');
     while (it.next()) |line| {
         if (line.len == 0) {
             continue;
         }
-        var iit = std.mem.split(u8, line, "  ");
+        var iit = std.mem.splitSequence(u8, line, "  ");
         const sha = iit.next().?;
         _ = sha;
         const name = iit.next().?;

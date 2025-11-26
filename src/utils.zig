@@ -32,26 +32,22 @@ pub fn download(alloc: Allocator, url: []const u8, outname: []const u8) !void {
     defer client.deinit();
 
     const uri = std.Uri.parse(url) catch unreachable;
-    var server_header_buffer: [2048]u8 = undefined;
 
-    var request = try client.open(.GET, uri, .{ .server_header_buffer = &server_header_buffer });
-    defer request.deinit();
+    var response_writer = std.Io.Writer.Allocating.init(alloc);
+    defer response_writer.deinit();
 
-    try request.send();
-    try request.wait();
+    _ = try client.fetch(.{
+        .location = .{ .uri = uri },
+        .response_writer = &response_writer.writer,
+    });
 
-    const content_length = request.response.content_length.?;
-    var transfer_buffer: [8192]u8 = undefined;
-    const reader = request.reader(&transfer_buffer);
-    const body = try reader.readAlloc(alloc, content_length);
-    defer alloc.free(body);
+    const body = response_writer.written();
 
     std.fs.cwd().makeDir(std.fs.path.dirname(outname).?) catch {};
     const dest = try std.fs.cwd().createFile(outname, .{});
     defer dest.close();
 
-    const bytes_written = try dest.writeAll(body);
-    _ = bytes_written;
+    try dest.writeAll(body);
 }
 
 pub fn extract(alloc: Allocator, archive: []const u8) !void {
