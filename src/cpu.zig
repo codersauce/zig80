@@ -737,6 +737,7 @@ pub const Z80 = struct {
         self.setZero(self.getA() == 0);
         self.setSign(self.getA() & 0x80 == 0x80);
         self.setParityOverflow(utils.parity(self.getA()));
+        self.setHalfCarry(false);
         self.wz = self.hl +% 1;
     }
 
@@ -1601,6 +1602,7 @@ pub const Z80 = struct {
                 flag.setXY1(result);
                 flag.setCarry(a & 0x80 == 0x80);
                 flag.setHalfCarry(false);
+                flag.setSubtract(false);
                 self.setF(flag.get());
 
                 self.cycles += 4;
@@ -1705,56 +1707,38 @@ pub const Z80 = struct {
                 self.cycles += 7;
             },
             0x27 => {
-                // DAA
-                // Adapted from: https://stackoverflow.com/a/57837042/14540
-                var t: u8 = 0;
+                // DAA - implemented to match Z80 reference (Z80.c)
+                const a = self.getA();
                 var flags = self.getFlag();
-                if (flags.isHalfCarry() or (self.getA() & 0x0F) > 9) {
-                    t += 1;
-                }
-                if (flags.isCarry() or self.getA() > 0x99) {
-                    t += 2;
-                    flags.setCarry(true);
-                }
-                if (flags.isSubtract() and !flags.isHalfCarry()) {
-                    flags.setHalfCarry(false);
-                } else {
-                    if (flags.isSubtract() and flags.isHalfCarry()) {
-                        flags.setHalfCarry((self.getA() & 0x0F) < 6);
-                    } else {
-                        flags.setHalfCarry((self.getA() & 0x0F) >= 0x0A);
-                    }
-                }
-                switch (t) {
-                    1 => {
-                        if (flags.isSubtract()) {
-                            self.setA(self.getA() +% 0xFA);
-                        } else {
-                            self.setA(self.getA() +% 0x06);
-                        }
-                    },
-                    2 => {
-                        if (flags.isSubtract()) {
-                            self.setA(self.getA() +% 0xA0);
-                        } else {
-                            self.setA(self.getA() +% 0x60);
-                        }
-                    },
-                    3 => {
-                        if (flags.isSubtract()) {
-                            self.setA(self.getA() +% 0x9A);
-                        } else {
-                            self.setA(self.getA() +% 0x66);
-                        }
-                    },
-                    else => {},
+
+                const old_cf = flags.isCarry();
+                const old_nf = flags.isSubtract();
+                const extra_cf = a > 0x99;
+
+                var t: u8 = if (flags.isHalfCarry() or (a & 0x0F) > 9) 6 else 0;
+                if (old_cf or extra_cf) {
+                    t |= 0x60;
                 }
 
-                flags.setSign(self.getA() & 0x80 == 0x80);
-                flags.setZero(self.getA() == 0);
-                flags.setParityOverflow(utils.countSetBits(self.getA()) % 2 == 0);
-                flags.setXY1(self.getA());
-                self.setF(flags.get());
+                const new_a: u8 = if (old_nf) a -% t else a +% t;
+
+                // Recompute flags from scratch as per Z80.c:
+                // - NF unchanged
+                // - CF |= extra_cf
+                // - S,Z from result
+                // - H from change in bit 4
+                // - P/V from parity of result
+                // - F3/F5 from result
+                var new_flags = Flag.init(0);
+                new_flags.setSubtract(old_nf);
+                const final_cf = old_cf or extra_cf;
+                new_flags.setCarry(final_cf);
+                new_flags.setFromU8(new_a);
+                new_flags.setHalfCarry(((a ^ new_a) & 0x10) != 0);
+                new_flags.setParityOverflow(utils.parity(new_a));
+
+                self.setA(new_a);
+                self.setF(new_flags.get());
                 self.cycles += 4;
             },
             0x28 => {
@@ -1858,6 +1842,7 @@ pub const Z80 = struct {
             0x37 => {
                 // SCF
                 var flag = self.getFlag();
+                // SF, ZF, PF unchanged; XY from A; CF=1; H,N=0
                 flag.setXY1(self.getA());
                 flag.setCarry(true);
                 flag.setSubtract(false);
@@ -1910,10 +1895,12 @@ pub const Z80 = struct {
             0x3F => {
                 // CCF
                 var flag = self.getFlag();
-                // flag.setHalfCarry(flag.isCarry());
-                flag.setCarry(!flag.isCarry());
-                flag.setSubtract(false);
+                const old_c = flag.isCarry();
+                // SF, ZF, PF unchanged; CF toggled; H gets old C; N=0; XY from A
                 flag.setXY1(self.getA());
+                flag.setCarry(!old_c);
+                flag.setHalfCarry(old_c);
+                flag.setSubtract(false);
                 self.setF(flag.get());
                 self.cycles += 4;
             },
