@@ -35,6 +35,7 @@ pub const Z80 = struct {
 
     // Q latch used for undocumented flag behavior (SCF/CCF).
     q: u8 = 0,
+    q_needs_update: bool = true,
 
     // "WZ" register.
     // https://www.grimware.org/lib/exe/fetch.php/documentations/devices/z80/z80.memptr.eng.txt
@@ -125,6 +126,7 @@ pub const Z80 = struct {
         self.r = 0;
         self.im = 0;
         self.q = 0;
+        self.q_needs_update = true;
         self.iff1 = false;
         self.iff2 = false;
         self.cycles = 0;
@@ -1437,16 +1439,22 @@ pub const Z80 = struct {
 
     // Execute a single instruction
     pub fn execute(self: *Z80) void {
-        // Snapshot flags before executing an instruction to approximate Q latch
-        // semantics: instructions that change F copy new F to Q, others clear Q.
+        // Snapshot flags before executing the instruction so we can approximate
+        // Q latch semantics: instructions that change F copy new F to Q,
+        // instructions that don't change F leave Q unchanged, and some
+        // instructions (EX AF,AF', POP AF, etc.) explicitly clear Q.
         const old_f: u8 = self.getF();
         // std.debug.print("opcode = 0x{X:0>2}\n", .{self.peekByte()});
         self.executeOpcode(self.fetchOpcode());
-        const new_f: u8 = self.getF();
-        if (new_f != old_f) {
-            self.q = new_f;
+        if (self.q_needs_update) {
+            const new_f: u8 = self.getF();
+            if (new_f != old_f) {
+                self.q = new_f;
+            }
+            // If F is unchanged, Q stays as-is.
         } else {
-            self.q = 0;
+            // Instruction explicitly managed Q; re-enable automatic updates.
+            self.q_needs_update = true;
         }
     }
 
@@ -1508,6 +1516,9 @@ pub const Z80 = struct {
                 const tmp = self.af;
                 self.af = self.af_;
                 self.af_ = tmp;
+                // EX AF,AF' does not affect Q latch.
+                self.q = 0;
+                self.q_needs_update = false;
                 self.cycles += 4;
             },
             0x09 => {
@@ -2559,6 +2570,9 @@ pub const Z80 = struct {
                 self.incSP();
                 self.setB(self.memory[self.sp]);
                 self.incSP();
+                // POP BC does not affect Q latch.
+                self.q = 0;
+                self.q_needs_update = false;
                 self.cycles += 10;
             },
             0xC2 => {
@@ -2710,6 +2724,9 @@ pub const Z80 = struct {
                 self.incSP();
                 self.setD(self.memory[self.sp]);
                 self.incSP();
+                // POP DE does not affect Q latch.
+                self.q = 0;
+                self.q_needs_update = false;
                 self.cycles += 10;
             },
             0xD2 => {
@@ -2859,6 +2876,9 @@ pub const Z80 = struct {
                 self.incSP();
                 self.setH(self.memory[self.sp]);
                 self.incSP();
+                // POP HL does not affect Q latch.
+                self.q = 0;
+                self.q_needs_update = false;
                 self.cycles += 10;
             },
             0xE2 => {
@@ -2984,6 +3004,9 @@ pub const Z80 = struct {
                 self.incSP();
                 self.setA(self.memory[self.sp]);
                 self.incSP();
+                // POP AF does not affect Q latch.
+                self.q = 0;
+                self.q_needs_update = false;
                 self.cycles += 10;
             },
             0xF2 => {
@@ -3574,6 +3597,9 @@ pub const Z80 = struct {
                 const nn = self.fetchWord();
                 self.sp = self.readWord(nn);
                 self.wz = nn +% 1;
+                 // LD SP,(nn) does not affect flags; ensure Q is cleared.
+                self.q = 0;
+                self.q_needs_update = false;
                 self.cycles += 20;
             },
 
