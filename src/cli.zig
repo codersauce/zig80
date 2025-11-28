@@ -107,6 +107,13 @@ pub fn parse(comptime T: type, args: [][]const u8) !?T {
                                         fields_seen[i] = true;
                                         @field(r, field.name) = arg;
                                     },
+                                    ?u32 => {
+                                        fields_seen[i] = true;
+                                        @field(r, field.name) = std.fmt.parseInt(u32, arg, 10) catch {
+                                            std.log.err("Invalid integer value '{s}'\n", .{arg});
+                                            return error.InvalidParam;
+                                        };
+                                    },
                                     bool => {
                                         return error.InvalidParam;
                                     },
@@ -263,7 +270,7 @@ pub fn help_for(comptime T: type, writer: anytype) !void {
     if (command) {
         try writer.print("\nCommands:", .{});
         inline for (fields) |field| {
-            if (@typeInfo(field.type) == .Union) {
+            if (comptime @typeInfo(field.type) == .Union) {
                 const subfields = std.meta.fields(field.type);
                 var max_command_len: u8 = 0;
 
